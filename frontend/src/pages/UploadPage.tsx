@@ -70,12 +70,12 @@ export default function UploadPage({ userId }: { userId: string }) {
     <div className="page">
       <div className="card">
         <h2 className="card-title">Upload a Document</h2>
-        <p className="card-subtitle">Supported formats: PDF, DOCX, TXT</p>
+        <p className="card-subtitle">Supported formats: PDF, TXT</p>
 
         <div className={`upload-zone${file ? " has-file" : ""}`}>
           <input
             type="file"
-            accept=".pdf,.docx,.txt"
+            accept=".pdf,.txt"
             onChange={handleFileChange}
           />
           {file ? (
