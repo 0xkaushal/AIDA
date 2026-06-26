@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { askQuestion, getChatHistory } from "../services/api";
+import { streamQuestion, getChatHistory } from "../services/api";
 
 interface Message {
   role: "user" | "ai";
@@ -12,6 +12,8 @@ export default function ChatPage({ userId }: { userId: string }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [streamingContent, setStreamingContent] = useState("");
+  const [streamingSources, setStreamingSources] = useState<string[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -41,23 +43,39 @@ export default function ChatPage({ userId }: { userId: string }) {
     setMessages((prev) => [...prev, { role: "user", content: question }]);
     setInput("");
     setLoading(true);
+    setStreamingContent("");
+    setStreamingSources([]);
+
+    // Local accumulators avoid stale-closure issues when building the final message
+    let finalContent = "";
+    let finalSources: string[] = [];
 
     try {
-      const data = await askQuestion({ question, user_id: userId });
+      await streamQuestion(
+        { question, user_id: userId },
+        (token) => {
+          finalContent += token;
+          setStreamingContent((prev) => prev + token);
+        },
+        (sources) => {
+          finalSources = sources;
+          setStreamingSources(sources);
+        },
+      );
       setMessages((prev) => [
         ...prev,
-        { role: "ai", content: data.answer, sources: data.sources },
+        { role: "ai", content: finalContent, sources: finalSources },
       ]);
     } catch (err: unknown) {
-      const detail =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data
-          ?.detail ?? "Something went wrong.";
+      const msg = err instanceof Error ? err.message : "Something went wrong.";
       setMessages((prev) => [
         ...prev,
-        { role: "ai", content: `⚠️ ${detail}` },
+        { role: "ai", content: `⚠️ ${msg}` },
       ]);
     } finally {
       setLoading(false);
+      setStreamingContent("");
+      setStreamingSources([]);
       textareaRef.current?.focus();
     }
   };
@@ -105,10 +123,24 @@ export default function ChatPage({ userId }: { userId: string }) {
         {loading && (
           <div className="message message-ai">
             <div className="message-avatar">AI</div>
-            <div className="message-bubble">
-              <div className="typing-dots">
-                <span /><span /><span />
+            <div>
+              <div className="message-bubble">
+                {streamingContent ? (
+                  streamingContent
+                ) : (
+                  <div className="typing-dots">
+                    <span /><span /><span />
+                  </div>
+                )}
               </div>
+              {streamingSources.length > 0 && (
+                <div className="message-sources">
+                  Sources:{" "}
+                  {streamingSources.map((s, j) => (
+                    <span key={j}>{s}</span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

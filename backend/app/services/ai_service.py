@@ -1,6 +1,8 @@
-from typing import List, Tuple
+from typing import List, Tuple, AsyncGenerator
 from collections import deque
+import json
 
+import httpx
 from openrouter import OpenRouter
 from pinecone import Pinecone
 
@@ -107,3 +109,62 @@ def answer_question(question: str, user_id: str) -> dict:
     _append_history(user_id, "assistant", answer)
 
     return {"answer": answer, "sources": sources}
+
+
+async def stream_answer_question(
+    question: str, user_id: str
+) -> AsyncGenerator[str, None]:
+    """Async generator yielding SSE-formatted strings for a streaming response."""
+    embedding = embed_question(question)
+    chunks, sources = retrieve_chunks(embedding, user_id)
+
+    if not chunks:
+        yield f'data: {json.dumps({"type": "error", "message": "No relevant documents found for your account."})}\n\n'
+        yield "data: [DONE]\n\n"
+        return
+
+    # Send sources immediately so the UI can render them before tokens arrive
+    yield f'data: {json.dumps({"type": "sources", "sources": sources})}\n\n'
+
+    messages = [
+        {"role": "system", "content": build_system_prompt(chunks)},
+        *get_history(user_id),
+        {"role": "user", "content": question},
+    ]
+
+    full_answer = ""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        async with client.stream(
+            "POST",
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": CHAT_MODEL,
+                "messages": messages,
+                "max_tokens": 1024,
+                "stream": True,
+            },
+        ) as response:
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                raw = line[6:]  # strip "data: " prefix
+                if raw == "[DONE]":
+                    break
+                try:
+                    payload = json.loads(raw)
+                    token = payload["choices"][0]["delta"].get("content", "")
+                    if token:
+                        full_answer += token
+                        yield f'data: {json.dumps({"type": "token", "token": token})}\n\n'
+                except (KeyError, json.JSONDecodeError):
+                    continue
+
+    # Persist the full exchange after streaming completes
+    _append_history(user_id, "user", question)
+    _append_history(user_id, "assistant", full_answer)
+
+    yield "data: [DONE]\n\n"
