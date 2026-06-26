@@ -65,12 +65,12 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
 
 # --- Pinecone upsert ---
 
-def store_chunks(chunks: List[str], embeddings: List[List[float]], filename: str, user_id: str) -> int:
+def store_chunks(chunks: List[str], embeddings: List[List[float]], filename: str, user_id: str, visibility: str) -> int:
     vectors = [
         {
             "id": str(uuid.uuid4()),
             "values": embedding,
-            "metadata": {"text": chunk, "source": filename, "user_id": user_id},
+            "metadata": {"text": chunk, "source": filename, "user_id": user_id, "visibility": visibility},
         }
         for chunk, embedding in zip(chunks, embeddings)
     ]
@@ -80,14 +80,14 @@ def store_chunks(chunks: List[str], embeddings: List[List[float]], filename: str
 
 # --- Main pipeline ---
 
-def process_document(file_bytes: bytes, filename: str, content_type: str, user_id: str) -> dict:
+def process_document(file_bytes: bytes, filename: str, content_type: str, user_id: str, visibility: str = "private") -> dict:
     text = extract_text(file_bytes, content_type)
     if not text.strip():
         raise ValueError("No text could be extracted from the file.")
 
     chunks = chunk_text(text)
     embeddings = embed_texts(chunks)
-    count = store_chunks(chunks, embeddings, filename, user_id)
+    count = store_chunks(chunks, embeddings, filename, user_id, visibility)
 
     _documents[f"{user_id}:{filename}"] = {
         "filename": filename,
@@ -95,18 +95,20 @@ def process_document(file_bytes: bytes, filename: str, content_type: str, user_i
         "characters": len(text),
         "uploaded_at": datetime.now(timezone.utc),
         "user_id": user_id,
+        "visibility": visibility,
     }
 
     return {
         "filename": filename,
         "chunks_stored": count,
         "characters": len(text),
+        "visibility": visibility,
     }
 
 
 def list_documents(user_id: str) -> list[dict]:
     return sorted(
-        [d for d in _documents.values() if d["user_id"] == user_id],
+        [d for d in _documents.values() if d["user_id"] == user_id or d["visibility"] == "public"],
         key=lambda d: d["uploaded_at"],
         reverse=True,
     )

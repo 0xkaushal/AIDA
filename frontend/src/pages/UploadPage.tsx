@@ -10,6 +10,7 @@ export default function UploadPage({ userId }: { userId: string }) {
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [docsLoading, setDocsLoading] = useState(true);
   const [confirmDuplicate, setConfirmDuplicate] = useState(false);
+  const [visibility, setVisibility] = useState<"private" | "public">("private");
 
   const fetchDocuments = useCallback(async () => {
     try {
@@ -31,6 +32,7 @@ export default function UploadPage({ userId }: { userId: string }) {
     setResult(null);
     setError(null);
     setConfirmDuplicate(false);
+    setVisibility("private");
     setFile(e.target.files?.[0] ?? null);
   };
 
@@ -50,7 +52,7 @@ export default function UploadPage({ userId }: { userId: string }) {
     setResult(null);
     setConfirmDuplicate(false);
     try {
-      const data = await uploadDocument(file, userId);
+      const data = await uploadDocument(file, userId, visibility);
       setResult(data);
       setFile(null);
       fetchDocuments();
@@ -92,6 +94,25 @@ export default function UploadPage({ userId }: { userId: string }) {
             </>
           )}
         </div>
+
+        {file && (
+          <div className="visibility-toggle">
+            <button
+              className={`visibility-btn${visibility === "private" ? " active" : ""}`}
+              onClick={() => setVisibility("private")}
+              type="button"
+            >
+              🔒 Private
+            </button>
+            <button
+              className={`visibility-btn${visibility === "public" ? " active" : ""}`}
+              onClick={() => setVisibility("public")}
+              type="button"
+            >
+              🌐 Public
+            </button>
+          </div>
+        )}
 
         {confirmDuplicate && (
           <div className="alert alert-error" style={{ marginBottom: "0.75rem" }}>
@@ -142,6 +163,9 @@ export default function UploadPage({ userId }: { userId: string }) {
             <div className="alert-row">
               <span>Characters extracted</span><strong>{result.characters.toLocaleString()}</strong>
             </div>
+            <div className="alert-row">
+              <span>Visibility</span><strong>{result.visibility === "public" ? "🌐 Public" : "🔒 Private"}</strong>
+            </div>
           </div>
         )}
       </div>
@@ -165,7 +189,8 @@ export default function UploadPage({ userId }: { userId: string }) {
                   <div className="doc-name">{doc.filename}</div>
                   <div className="doc-details">
                     {doc.chunks_stored} chunks · {doc.characters.toLocaleString()} chars ·{" "}
-                    {new Date(doc.uploaded_at).toLocaleString()}
+                    {new Date(doc.uploaded_at).toLocaleString()} ·{" "}
+                    {doc.visibility === "public" ? "🌐 Public" : "🔒 Private"}
                   </div>
                 </div>
               </li>

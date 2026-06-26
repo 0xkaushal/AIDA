@@ -12,13 +12,13 @@ export async function listDocuments(userId: string): Promise<DocumentInfo[]> {
   return data.documents;
 }
 
-export async function uploadDocument(file: File, userId: string): Promise<UploadResponse> {
+export async function uploadDocument(file: File, userId: string, visibility: "public" | "private"): Promise<UploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
   const { data } = await api.post<UploadResponse>(
     "/api/v1/documents/upload",
     formData,
-    { params: { user_id: userId } }
+    { params: { user_id: userId, visibility } }
   );
   return data;
 }

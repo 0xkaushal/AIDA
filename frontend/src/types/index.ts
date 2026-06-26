@@ -3,6 +3,7 @@ export interface UploadResponse {
   filename: string;
   chunks_stored: number;
   characters: number;
+  visibility: string;
 }
 
 export interface DocumentInfo {
@@ -10,6 +11,7 @@ export interface DocumentInfo {
   chunks_stored: number;
   characters: number;
   uploaded_at: string;
+  visibility?: string;
 }
 
 export interface ChatRequest {

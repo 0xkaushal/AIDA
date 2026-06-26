@@ -21,6 +21,7 @@ async def get_documents(user_id: str = Query(..., min_length=1)):
 async def upload_document(
     file: UploadFile = File(...),
     user_id: str = Query(..., min_length=1),
+    visibility: str = Query(default="private", pattern="^(public|private)$"),
 ):
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(
@@ -33,7 +34,7 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
     try:
-        result = process_document(file_bytes, file.filename, file.content_type, user_id)
+        result = process_document(file_bytes, file.filename, file.content_type, user_id, visibility)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

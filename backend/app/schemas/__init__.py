@@ -8,6 +8,7 @@ class UploadResponse(BaseModel):
     filename: str
     chunks_stored: int
     characters: int
+    visibility: str
 
 
 class DocumentInfo(BaseModel):

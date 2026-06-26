@@ -579,3 +579,36 @@ body { margin: 0; }
   opacity: 0.65;
   margin-top: 0.2rem;
 }
+
+/* ── Visibility toggle ───────────────────────── */
+.visibility-toggle {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.visibility-btn {
+  flex: 1;
+  padding: 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.visibility-btn:hover {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+
+.visibility-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 700;
+}

@@ -29,7 +29,7 @@ def retrieve_chunks(question_embedding: List[float], user_id: str) -> Tuple[List
         vector=question_embedding,
         top_k=TOP_K,
         include_metadata=True,
-        filter={"user_id": {"$eq": user_id}},
+        filter={"$or": [{"user_id": {"$eq": user_id}}, {"visibility": {"$eq": "public"}}]},
     )
     texts = [match.metadata["text"] for match in results.matches]
     sources = list({match.metadata["source"] for match in results.matches})
