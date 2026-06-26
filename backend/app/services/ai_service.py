@@ -31,8 +31,14 @@ def retrieve_chunks(question_embedding: List[float], user_id: str) -> Tuple[List
         include_metadata=True,
         filter={"$or": [{"user_id": {"$eq": user_id}}, {"visibility": {"$eq": "public"}}]},
     )
-    texts = [match.metadata["text"] for match in results.matches]
-    sources = list({match.metadata["source"] for match in results.matches})
+    # Post-filter in Python as a safety net for vectors missing metadata fields
+    authorized = [
+        m for m in results.matches
+        if m.metadata.get("visibility") == "public"
+        or m.metadata.get("user_id") == user_id
+    ]
+    texts = [m.metadata["text"] for m in authorized]
+    sources = list({m.metadata["source"] for m in authorized})
     return texts, sources
 
 
