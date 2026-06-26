@@ -1,6 +1,7 @@
 import uuid
 import io
 from typing import List
+from datetime import datetime, timezone
 
 import pypdf
 from openrouter import OpenRouter
@@ -17,6 +18,9 @@ EMBED_MODEL = "openai/text-embedding-3-small"
 EMBED_DIMENSIONS = 1024  # must match your Pinecone index dimension
 CHUNK_SIZE = 500         # characters per chunk
 CHUNK_OVERLAP = 50       # overlap between chunks
+
+# --- In-memory document registry ---
+_documents: dict[str, dict] = {}
 
 
 # --- Parsing ---
@@ -85,8 +89,19 @@ def process_document(file_bytes: bytes, filename: str, content_type: str) -> dic
     embeddings = embed_texts(chunks)
     count = store_chunks(chunks, embeddings, filename)
 
+    _documents[filename] = {
+        "filename": filename,
+        "chunks_stored": count,
+        "characters": len(text),
+        "uploaded_at": datetime.now(timezone.utc),
+    }
+
     return {
         "filename": filename,
         "chunks_stored": count,
         "characters": len(text),
     }
+
+
+def list_documents() -> list[dict]:
+    return sorted(_documents.values(), key=lambda d: d["uploaded_at"], reverse=True)

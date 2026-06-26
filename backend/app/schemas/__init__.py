@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from typing import List
+from datetime import datetime
 
 
 class UploadResponse(BaseModel):
@@ -7,6 +8,17 @@ class UploadResponse(BaseModel):
     filename: str
     chunks_stored: int
     characters: int
+
+
+class DocumentInfo(BaseModel):
+    filename: str
+    chunks_stored: int
+    characters: int
+    uploaded_at: datetime
+
+
+class DocumentListResponse(BaseModel):
+    documents: List[DocumentInfo]
 
 
 class ChatRequest(BaseModel):

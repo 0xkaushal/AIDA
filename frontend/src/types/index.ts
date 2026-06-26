@@ -5,6 +5,13 @@ export interface UploadResponse {
   characters: number;
 }
 
+export interface DocumentInfo {
+  filename: string;
+  chunks_stored: number;
+  characters: number;
+  uploaded_at: string;
+}
+
 export interface ChatRequest {
   question: string;
 }

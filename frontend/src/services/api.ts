@@ -1,9 +1,14 @@
 import axios from "axios";
-import type { UploadResponse, ChatRequest, ChatResponse } from "../types";
+import type { UploadResponse, ChatRequest, ChatResponse, DocumentInfo } from "../types";
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000",
 });
+
+export async function listDocuments(): Promise<DocumentInfo[]> {
+  const { data } = await api.get<{ documents: DocumentInfo[] }>("/api/v1/documents/");
+  return data.documents;
+}
 
 export async function uploadDocument(file: File): Promise<UploadResponse> {
   const formData = new FormData();

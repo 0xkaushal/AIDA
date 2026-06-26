@@ -1,12 +1,27 @@
-import { useState } from "react";
-import { uploadDocument } from "../services/api";
-import type { UploadResponse } from "../types";
+import { useState, useEffect, useCallback } from "react";
+import { uploadDocument, listDocuments } from "../services/api";
+import type { UploadResponse, DocumentInfo } from "../types";
 
 export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<UploadResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [documents, setDocuments] = useState<DocumentInfo[]>([]);
+  const [docsLoading, setDocsLoading] = useState(true);
+
+  const fetchDocuments = useCallback(async () => {
+    try {
+      const docs = await listDocuments();
+      setDocuments(docs);
+    } catch {
+      // silently fail — list is non-critical
+    } finally {
+      setDocsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchDocuments(); }, [fetchDocuments]);
 
   const handleUpload = async () => {
     if (!file) return;
@@ -17,6 +32,7 @@ export default function UploadPage() {
       const data = await uploadDocument(file);
       setResult(data);
       setFile(null);
+      fetchDocuments();
     } catch (err: unknown) {
       setError(
         (err as { response?: { data?: { detail?: string } } })?.response?.data
@@ -66,13 +82,9 @@ export default function UploadPage() {
           disabled={!file || loading}
         >
           {loading ? (
-            <>
-              <span style={{ fontSize: "0.8rem" }}>⏳</span> Processing…
-            </>
+            <><span style={{ fontSize: "0.8rem" }}>⏳</span> Processing…</>
           ) : (
-            <>
-              <span>⬆</span> Upload & Process
-            </>
+            <><span>⬆</span> Upload & Process</>
           )}
         </button>
 
@@ -87,14 +99,40 @@ export default function UploadPage() {
           <div className="alert alert-success">
             <div className="alert-title">✓ {result.filename} processed</div>
             <div className="alert-row">
-              <span>Chunks stored</span>
-              <strong>{result.chunks_stored}</strong>
+              <span>Chunks stored</span><strong>{result.chunks_stored}</strong>
             </div>
             <div className="alert-row">
-              <span>Characters extracted</span>
-              <strong>{result.characters.toLocaleString()}</strong>
+              <span>Characters extracted</span><strong>{result.characters.toLocaleString()}</strong>
             </div>
           </div>
+        )}
+      </div>
+
+      <div className="card" style={{ marginTop: "1.5rem" }}>
+        <h2 className="card-title" style={{ fontSize: "1rem", marginBottom: "1rem" }}>
+          Uploaded Documents
+          <span className="doc-count">{documents.length}</span>
+        </h2>
+
+        {docsLoading ? (
+          <div className="doc-list-empty">Loading…</div>
+        ) : documents.length === 0 ? (
+          <div className="doc-list-empty">No documents uploaded yet.</div>
+        ) : (
+          <ul className="doc-list">
+            {documents.map((doc) => (
+              <li key={doc.filename} className="doc-item">
+                <div className="doc-icon">📄</div>
+                <div className="doc-meta">
+                  <div className="doc-name">{doc.filename}</div>
+                  <div className="doc-details">
+                    {doc.chunks_stored} chunks · {doc.characters.toLocaleString()} chars ·{" "}
+                    {new Date(doc.uploaded_at).toLocaleString()}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </div>

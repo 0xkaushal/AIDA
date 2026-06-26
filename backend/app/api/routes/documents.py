@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from schemas import UploadResponse
-from services.document_service import process_document
+from schemas import UploadResponse, DocumentListResponse, DocumentInfo
+from services.document_service import process_document, list_documents
 
 router = APIRouter()
 
@@ -8,6 +8,13 @@ ALLOWED_TYPES = {
     "application/pdf": ".pdf",
     "text/plain": ".txt",
 }
+
+
+@router.get("/", response_model=DocumentListResponse)
+async def get_documents():
+    return DocumentListResponse(
+        documents=[DocumentInfo(**d) for d in list_documents()]
+    )
 
 
 @router.post("/upload", response_model=UploadResponse)
