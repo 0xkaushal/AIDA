@@ -54,8 +54,15 @@ export async function streamQuestion(
   });
 
   if (!response.ok) {
-    const err = await response.json().catch(() => ({ detail: "Request failed" }));
-    throw new Error((err as { detail?: string }).detail ?? "Request failed");
+    const body = await response.json().catch(() => null);
+    const detail = body?.detail;
+    // FastAPI returns detail as a string for HTTP errors, or an array of
+    // objects for validation errors (422). Handle both forms.
+    const message =
+      typeof detail === "string" ? detail
+      : Array.isArray(detail) && detail.length > 0 ? (detail[0]?.msg ?? "Request failed")
+      : "Request failed";
+    throw new Error(message);
   }
 
   const reader = response.body!.getReader();
