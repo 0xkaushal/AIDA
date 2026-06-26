@@ -13,7 +13,8 @@ pc = Pinecone(api_key=settings.PINECONE_API_KEY)
 index = pc.Index(settings.PINECONE_INDEX_NAME)
 
 CHAT_MODEL = "openai/gpt-4o-mini"
-TOP_K = 5
+TOP_K = 8              # over-fetch; low-score results are pruned below
+SCORE_THRESHOLD = 0.25 # drop chunks with cosine similarity below this
 MAX_HISTORY_TURNS = 10  # keep last 10 user+assistant exchanges
 
 # --- In-memory chat history ---
@@ -51,7 +52,7 @@ def retrieve_chunks(question_embedding: List[float], user_id: str) -> Tuple[List
         include_metadata=True,
         filter={"$or": [{"user_id": {"$eq": user_id}}, {"visibility": {"$eq": "public"}}]},
     )
-    # Post-filter in Python as a safety net for vectors missing metadata fields
+    # Post-filter: authorisation AND relevance score threshold
     authorized = [
         m for m in results.matches
         if m.metadata
@@ -59,6 +60,8 @@ def retrieve_chunks(question_embedding: List[float], user_id: str) -> Tuple[List
             m.metadata.get("visibility") == "public"
             or m.metadata.get("user_id") == user_id
         )
+        and m.score is not None
+        and m.score >= SCORE_THRESHOLD
     ]
     texts = [m.metadata["text"] for m in authorized if m.metadata.get("text")]
     sources = list({m.metadata["source"] for m in authorized if m.metadata.get("source")})
@@ -66,12 +69,15 @@ def retrieve_chunks(question_embedding: List[float], user_id: str) -> Tuple[List
 
 
 def build_system_prompt(chunks: List[str]) -> str:
-    context = "\n\n".join(chunks)
+    numbered = "\n\n".join(f"[{i+1}] {chunk}" for i, chunk in enumerate(chunks))
     return (
-        "You are a helpful document assistant. "
-        "Answer questions using only the context below. "
-        "If the answer is not in the context, say you don't know.\n\n"
-        f"Context:\n{context}"
+        "You are AIDA, a helpful document assistant.\n"
+        "Answer the user's question using ONLY the context passages below.\n"
+        "If the answer is not contained in the passages, say: "
+        "\"I couldn't find that in the uploaded documents.\"\n"
+        "Do not make up information or use prior knowledge.\n"
+        "Be concise. When helpful, reference the passage number (e.g. 'According to [2]...').\n\n"
+        f"Context passages:\n{numbered}"
     )
 
 
