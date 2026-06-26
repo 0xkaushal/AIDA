@@ -33,6 +33,10 @@ export async function getChatHistory(userId: string): Promise<{ role: string; co
   return data.messages;
 }
 
+/**
+ * Non-streaming fallback. Kept for reference and testing via /docs.
+ * The UI uses streamQuestion() instead, which streams tokens as they arrive.
+ */
 export async function askQuestion(request: ChatRequest): Promise<ChatResponse> {
   const { data } = await api.post<ChatResponse>("/api/v1/chat/ask", request);
   return data;

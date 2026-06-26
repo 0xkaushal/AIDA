@@ -13,6 +13,8 @@ def history(user_id: str):
     )
 
 
+# Non-streaming fallback — kept for direct API testing via /docs and as a
+# reference implementation. The UI calls POST /stream instead.
 @router.post("/ask", response_model=ChatResponse)
 def ask(request: ChatRequest):
     if not request.question.strip():
