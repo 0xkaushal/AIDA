@@ -1,63 +1,125 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { askQuestion } from "../services/api";
-import type { ChatResponse } from "../types";
+
+interface Message {
+  role: "user" | "ai";
+  content: string;
+  sources?: string[];
+}
 
 export default function ChatPage() {
-  const [question, setQuestion] = useState("");
-  const [response, setResponse] = useState<ChatResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleAsk = async () => {
-    if (!question.trim()) return;
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  const handleSend = async () => {
+    const question = input.trim();
+    if (!question || loading) return;
+
+    setMessages((prev) => [...prev, { role: "user", content: question }]);
+    setInput("");
     setLoading(true);
-    setError(null);
-    setResponse(null);
+
     try {
       const data = await askQuestion({ question });
-      setResponse(data);
+      setMessages((prev) => [
+        ...prev,
+        { role: "ai", content: data.answer, sources: data.sources },
+      ]);
     } catch (err: unknown) {
-      setError(
+      const detail =
         (err as { response?: { data?: { detail?: string } } })?.response?.data
-          ?.detail ?? "Something went wrong."
-      );
+          ?.detail ?? "Something went wrong.";
+      setMessages((prev) => [
+        ...prev,
+        { role: "ai", content: `⚠️ ${detail}` },
+      ]);
     } finally {
       setLoading(false);
+      textareaRef.current?.focus();
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
     }
   };
 
   return (
-    <div style={{ maxWidth: 700, margin: "2rem auto", fontFamily: "sans-serif" }}>
-      <h1>Ask Your Documents</h1>
-
-      <textarea
-        rows={3}
-        style={{ width: "100%", padding: "0.5rem", fontSize: "1rem" }}
-        placeholder="Ask a question about your uploaded documents…"
-        value={question}
-        onChange={(e) => setQuestion(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleAsk()}
-      />
-      <br />
-      <button onClick={handleAsk} disabled={!question.trim() || loading}>
-        {loading ? "Thinking…" : "Ask"}
-      </button>
-
-      {error && <p style={{ color: "red" }}>{error}</p>}
-
-      {response && (
-        <div style={{ marginTop: "1.5rem" }}>
-          <div style={{ background: "#eef6ff", padding: "1rem", borderRadius: 8 }}>
-            <strong>Answer:</strong>
-            <p style={{ whiteSpace: "pre-wrap" }}>{response.answer}</p>
-          </div>
-          {response.sources.length > 0 && (
-            <div style={{ marginTop: "0.5rem", color: "#555" }}>
-              <strong>Sources:</strong> {response.sources.join(", ")}
+    <div className="chat-page">
+      <div className="chat-messages">
+        {messages.length === 0 && !loading && (
+          <div className="chat-empty">
+            <div className="chat-empty-icon">💬</div>
+            <div className="chat-empty-text">
+              Upload a document, then ask questions about it
             </div>
-          )}
+          </div>
+        )}
+
+        {messages.map((msg, i) => (
+          <div key={i} className={`message message-${msg.role}`}>
+            <div className="message-avatar">
+              {msg.role === "user" ? "You" : "AI"}
+            </div>
+            <div>
+              <div className="message-bubble">{msg.content}</div>
+              {msg.sources && msg.sources.length > 0 && (
+                <div className="message-sources">
+                  Sources:{" "}
+                  {msg.sources.map((s, j) => (
+                    <span key={j}>{s}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {loading && (
+          <div className="message message-ai">
+            <div className="message-avatar">AI</div>
+            <div className="message-bubble">
+              <div className="typing-dots">
+                <span /><span /><span />
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div ref={bottomRef} />
+      </div>
+
+      <div className="chat-input-bar">
+        <div className="chat-input-wrap">
+          <textarea
+            ref={textareaRef}
+            className="chat-textarea"
+            rows={1}
+            placeholder="Ask a question about your documents… (Enter to send)"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+          />
         </div>
-      )}
+        <button
+          className="chat-send-btn"
+          onClick={handleSend}
+          disabled={!input.trim() || loading}
+          title="Send"
+        >
+          ➤
+        </button>
+      </div>
     </div>
   );
 }
+

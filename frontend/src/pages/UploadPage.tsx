@@ -16,6 +16,7 @@ export default function UploadPage() {
     try {
       const data = await uploadDocument(file);
       setResult(data);
+      setFile(null);
     } catch (err: unknown) {
       setError(
         (err as { response?: { data?: { detail?: string } } })?.response?.data
@@ -27,30 +28,76 @@ export default function UploadPage() {
   };
 
   return (
-    <div style={{ maxWidth: 600, margin: "2rem auto", fontFamily: "sans-serif" }}>
-      <h1>Upload Document</h1>
-      <p>Supported formats: PDF, TXT</p>
+    <div className="page">
+      <div className="card">
+        <h2 className="card-title">Upload a Document</h2>
+        <p className="card-subtitle">Supported formats: PDF, DOCX, TXT</p>
 
-      <input
-        type="file"
-        accept=".pdf,.txt"
-        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-      />
-      <br />
-      <br />
-      <button onClick={handleUpload} disabled={!file || loading}>
-        {loading ? "Uploading…" : "Upload & Process"}
-      </button>
-
-      {error && <p style={{ color: "red" }}>{error}</p>}
-
-      {result && (
-        <div style={{ marginTop: "1rem", background: "#f0f0f0", padding: "1rem", borderRadius: 8 }}>
-          <p>✅ <strong>{result.filename}</strong> processed successfully</p>
-          <p>Chunks stored: {result.chunks_stored}</p>
-          <p>Characters extracted: {result.characters}</p>
+        <div className={`upload-zone${file ? " has-file" : ""}`}>
+          <input
+            type="file"
+            accept=".pdf,.docx,.txt"
+            onChange={(e) => {
+              setResult(null);
+              setError(null);
+              setFile(e.target.files?.[0] ?? null);
+            }}
+          />
+          {file ? (
+            <>
+              <div className="upload-icon">📄</div>
+              <div className="upload-zone-text"><strong>{file.name}</strong></div>
+              <div className="upload-zone-hint">{(file.size / 1024).toFixed(1)} KB — click to change</div>
+            </>
+          ) : (
+            <>
+              <div className="upload-icon">📂</div>
+              <div className="upload-zone-text">
+                <strong>Click to choose a file</strong> or drag & drop
+              </div>
+              <div className="upload-zone-hint">PDF, DOCX or TXT up to 50 MB</div>
+            </>
+          )}
         </div>
-      )}
+
+        <button
+          className="btn btn-primary"
+          onClick={handleUpload}
+          disabled={!file || loading}
+        >
+          {loading ? (
+            <>
+              <span style={{ fontSize: "0.8rem" }}>⏳</span> Processing…
+            </>
+          ) : (
+            <>
+              <span>⬆</span> Upload & Process
+            </>
+          )}
+        </button>
+
+        {error && (
+          <div className="alert alert-error">
+            <div className="alert-title">Upload failed</div>
+            {error}
+          </div>
+        )}
+
+        {result && (
+          <div className="alert alert-success">
+            <div className="alert-title">✓ {result.filename} processed</div>
+            <div className="alert-row">
+              <span>Chunks stored</span>
+              <strong>{result.chunks_stored}</strong>
+            </div>
+            <div className="alert-row">
+              <span>Characters extracted</span>
+              <strong>{result.characters.toLocaleString()}</strong>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
+
