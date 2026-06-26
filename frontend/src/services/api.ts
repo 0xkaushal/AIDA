@@ -23,6 +23,14 @@ export async function uploadDocument(file: File, userId: string, visibility: "pu
   return data;
 }
 
+export async function getChatHistory(userId: string): Promise<{ role: string; content: string }[]> {
+  const { data } = await api.get<{ messages: { role: string; content: string }[] }>(
+    "/api/v1/chat/history",
+    { params: { user_id: userId } }
+  );
+  return data.messages;
+}
+
 export async function askQuestion(request: ChatRequest): Promise<ChatResponse> {
   const { data } = await api.post<ChatResponse>("/api/v1/chat/ask", request);
   return data;

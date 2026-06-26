@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { askQuestion } from "../services/api";
+import { askQuestion, getChatHistory } from "../services/api";
 
 interface Message {
   role: "user" | "ai";
@@ -11,8 +11,24 @@ export default function ChatPage({ userId }: { userId: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load history from backend on mount
+  useEffect(() => {
+    getChatHistory(userId)
+      .then((msgs) => {
+        setMessages(
+          msgs.map((m) => ({
+            role: m.role === "assistant" ? "ai" : "user",
+            content: m.content,
+          }))
+        );
+      })
+      .catch(() => {/* backend not available — start fresh */})
+      .finally(() => setHistoryLoading(false));
+  }, [userId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -60,7 +76,9 @@ export default function ChatPage({ userId }: { userId: string }) {
           <div className="chat-empty">
             <div className="chat-empty-icon">💬</div>
             <div className="chat-empty-text">
-              Upload a document, then ask questions about it
+              {historyLoading
+                ? "Loading history…"
+                : "Upload a document, then ask questions about it"}
             </div>
           </div>
         )}

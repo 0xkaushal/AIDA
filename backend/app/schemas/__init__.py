@@ -23,6 +23,15 @@ class DocumentListResponse(BaseModel):
     documents: List[DocumentInfo]
 
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: List[ChatMessage]
+
+
 class ChatRequest(BaseModel):
     question: str
     user_id: str

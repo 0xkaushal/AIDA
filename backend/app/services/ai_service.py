@@ -1,4 +1,5 @@
 from typing import List, Tuple
+from collections import deque
 
 from openrouter import OpenRouter
 from pinecone import Pinecone
@@ -13,6 +14,25 @@ index = pc.Index(settings.PINECONE_INDEX_NAME)
 
 CHAT_MODEL = "openai/gpt-4o-mini"
 TOP_K = 5
+MAX_HISTORY_TURNS = 10  # keep last 10 user+assistant exchanges
+
+# --- In-memory chat history ---
+# {user_id: deque([{"role": "user"|"assistant", "content": str}, ...])}
+_chat_history: dict[str, deque] = {}
+
+
+def get_history(user_id: str) -> list[dict]:
+    return list(_chat_history.get(user_id, []))
+
+
+def _append_history(user_id: str, role: str, content: str) -> None:
+    if user_id not in _chat_history:
+        _chat_history[user_id] = deque(maxlen=MAX_HISTORY_TURNS * 2)
+    _chat_history[user_id].append({"role": role, "content": content})
+
+
+def clear_history(user_id: str) -> None:
+    _chat_history.pop(user_id, None)
 
 
 def embed_question(question: str) -> List[float]:
@@ -34,22 +54,24 @@ def retrieve_chunks(question_embedding: List[float], user_id: str) -> Tuple[List
     # Post-filter in Python as a safety net for vectors missing metadata fields
     authorized = [
         m for m in results.matches
-        if m.metadata.get("visibility") == "public"
-        or m.metadata.get("user_id") == user_id
+        if m.metadata
+        and (
+            m.metadata.get("visibility") == "public"
+            or m.metadata.get("user_id") == user_id
+        )
     ]
-    texts = [m.metadata["text"] for m in authorized]
-    sources = list({m.metadata["source"] for m in authorized})
+    texts = [m.metadata["text"] for m in authorized if m.metadata.get("text")]
+    sources = list({m.metadata["source"] for m in authorized if m.metadata.get("source")})
     return texts, sources
 
 
-def build_prompt(question: str, chunks: List[str]) -> str:
+def build_system_prompt(chunks: List[str]) -> str:
     context = "\n\n".join(chunks)
     return (
-        f"You are a helpful document assistant. "
-        f"Answer the question using only the context below. "
-        f"If the answer is not in the context, say you don't know.\n\n"
-        f"Context:\n{context}\n\n"
-        f"Question: {question}"
+        "You are a helpful document assistant. "
+        "Answer questions using only the context below. "
+        "If the answer is not in the context, say you don't know.\n\n"
+        f"Context:\n{context}"
     )
 
 
@@ -60,11 +82,22 @@ def answer_question(question: str, user_id: str) -> dict:
     if not chunks:
         return {"answer": "No relevant documents found for your account.", "sources": []}
 
-    prompt = build_prompt(question, chunks)
+    # Build messages: system (RAG context) + history + current question
+    messages = [
+        {"role": "system", "content": build_system_prompt(chunks)},
+        *get_history(user_id),
+        {"role": "user", "content": question},
+    ]
+
     response = openrouter_client.chat.send(
         model=CHAT_MODEL,
-        messages=[{"role": "user", "content": prompt}],
+        messages=messages,
         max_tokens=1024,
     )
     answer = response.choices[0].message.content
+
+    # Persist this exchange
+    _append_history(user_id, "user", question)
+    _append_history(user_id, "assistant", answer)
+
     return {"answer": answer, "sources": sources}
