@@ -16,6 +16,7 @@ class DocumentInfo(BaseModel):
     chunks_stored: int
     characters: int
     uploaded_at: datetime
+    visibility: str = "private"
 
 
 class DocumentListResponse(BaseModel):
