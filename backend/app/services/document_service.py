@@ -65,12 +65,12 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
 
 # --- Pinecone upsert ---
 
-def store_chunks(chunks: List[str], embeddings: List[List[float]], filename: str) -> int:
+def store_chunks(chunks: List[str], embeddings: List[List[float]], filename: str, user_id: str) -> int:
     vectors = [
         {
             "id": str(uuid.uuid4()),
             "values": embedding,
-            "metadata": {"text": chunk, "source": filename},
+            "metadata": {"text": chunk, "source": filename, "user_id": user_id},
         }
         for chunk, embedding in zip(chunks, embeddings)
     ]
@@ -80,20 +80,21 @@ def store_chunks(chunks: List[str], embeddings: List[List[float]], filename: str
 
 # --- Main pipeline ---
 
-def process_document(file_bytes: bytes, filename: str, content_type: str) -> dict:
+def process_document(file_bytes: bytes, filename: str, content_type: str, user_id: str) -> dict:
     text = extract_text(file_bytes, content_type)
     if not text.strip():
         raise ValueError("No text could be extracted from the file.")
 
     chunks = chunk_text(text)
     embeddings = embed_texts(chunks)
-    count = store_chunks(chunks, embeddings, filename)
+    count = store_chunks(chunks, embeddings, filename, user_id)
 
-    _documents[filename] = {
+    _documents[f"{user_id}:{filename}"] = {
         "filename": filename,
         "chunks_stored": count,
         "characters": len(text),
         "uploaded_at": datetime.now(timezone.utc),
+        "user_id": user_id,
     }
 
     return {
@@ -103,5 +104,9 @@ def process_document(file_bytes: bytes, filename: str, content_type: str) -> dic
     }
 
 
-def list_documents() -> list[dict]:
-    return sorted(_documents.values(), key=lambda d: d["uploaded_at"], reverse=True)
+def list_documents(user_id: str) -> list[dict]:
+    return sorted(
+        [d for d in _documents.values() if d["user_id"] == user_id],
+        key=lambda d: d["uploaded_at"],
+        reverse=True,
+    )

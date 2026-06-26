@@ -14,6 +14,7 @@ export interface DocumentInfo {
 
 export interface ChatRequest {
   question: string;
+  user_id: string;
 }
 
 export interface ChatResponse {

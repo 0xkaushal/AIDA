@@ -24,11 +24,12 @@ def embed_question(question: str) -> List[float]:
     return response.data[0].embedding
 
 
-def retrieve_chunks(question_embedding: List[float]) -> Tuple[List[str], List[str]]:
+def retrieve_chunks(question_embedding: List[float], user_id: str) -> Tuple[List[str], List[str]]:
     results = index.query(
         vector=question_embedding,
         top_k=TOP_K,
         include_metadata=True,
+        filter={"user_id": {"$eq": user_id}},
     )
     texts = [match.metadata["text"] for match in results.matches]
     sources = list({match.metadata["source"] for match in results.matches})
@@ -46,12 +47,12 @@ def build_prompt(question: str, chunks: List[str]) -> str:
     )
 
 
-def answer_question(question: str) -> dict:
+def answer_question(question: str, user_id: str) -> dict:
     embedding = embed_question(question)
-    chunks, sources = retrieve_chunks(embedding)
+    chunks, sources = retrieve_chunks(embedding, user_id)
 
     if not chunks:
-        return {"answer": "No relevant documents found.", "sources": []}
+        return {"answer": "No relevant documents found for your account.", "sources": []}
 
     prompt = build_prompt(question, chunks)
     response = openrouter_client.chat.send(

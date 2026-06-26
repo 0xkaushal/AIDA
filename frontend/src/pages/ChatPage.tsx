@@ -7,7 +7,7 @@ interface Message {
   sources?: string[];
 }
 
-export default function ChatPage() {
+export default function ChatPage({ userId }: { userId: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -27,7 +27,7 @@ export default function ChatPage() {
     setLoading(true);
 
     try {
-      const data = await askQuestion({ question });
+      const data = await askQuestion({ question, user_id: userId });
       setMessages((prev) => [
         ...prev,
         { role: "ai", content: data.answer, sources: data.sources },

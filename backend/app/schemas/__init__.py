@@ -23,6 +23,7 @@ class DocumentListResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     question: str
+    user_id: str
 
 
 class ChatResponse(BaseModel):

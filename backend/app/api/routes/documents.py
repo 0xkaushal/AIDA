@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query
 from schemas import UploadResponse, DocumentListResponse, DocumentInfo
 from services.document_service import process_document, list_documents
 
@@ -11,14 +11,17 @@ ALLOWED_TYPES = {
 
 
 @router.get("/", response_model=DocumentListResponse)
-async def get_documents():
+async def get_documents(user_id: str = Query(..., min_length=1)):
     return DocumentListResponse(
-        documents=[DocumentInfo(**d) for d in list_documents()]
+        documents=[DocumentInfo(**d) for d in list_documents(user_id)]
     )
 
 
 @router.post("/upload", response_model=UploadResponse)
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(
+    file: UploadFile = File(...),
+    user_id: str = Query(..., min_length=1),
+):
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(
             status_code=400,
@@ -30,7 +33,7 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
     try:
-        result = process_document(file_bytes, file.filename, file.content_type)
+        result = process_document(file_bytes, file.filename, file.content_type, user_id)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

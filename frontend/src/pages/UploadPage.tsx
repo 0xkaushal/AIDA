@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { uploadDocument, listDocuments } from "../services/api";
 import type { UploadResponse, DocumentInfo } from "../types";
 
-export default function UploadPage() {
+export default function UploadPage({ userId }: { userId: string }) {
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<UploadResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -13,7 +13,7 @@ export default function UploadPage() {
 
   const fetchDocuments = useCallback(async () => {
     try {
-      const docs = await listDocuments();
+      const docs = await listDocuments(userId);
       setDocuments(docs);
     } catch {
       // silently fail — list is non-critical
@@ -50,7 +50,7 @@ export default function UploadPage() {
     setResult(null);
     setConfirmDuplicate(false);
     try {
-      const data = await uploadDocument(file);
+      const data = await uploadDocument(file, userId);
       setResult(data);
       setFile(null);
       fetchDocuments();

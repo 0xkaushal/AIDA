@@ -5,17 +5,20 @@ const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000",
 });
 
-export async function listDocuments(): Promise<DocumentInfo[]> {
-  const { data } = await api.get<{ documents: DocumentInfo[] }>("/api/v1/documents/");
+export async function listDocuments(userId: string): Promise<DocumentInfo[]> {
+  const { data } = await api.get<{ documents: DocumentInfo[] }>("/api/v1/documents/", {
+    params: { user_id: userId },
+  });
   return data.documents;
 }
 
-export async function uploadDocument(file: File): Promise<UploadResponse> {
+export async function uploadDocument(file: File, userId: string): Promise<UploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
   const { data } = await api.post<UploadResponse>(
     "/api/v1/documents/upload",
-    formData
+    formData,
+    { params: { user_id: userId } }
   );
   return data;
 }

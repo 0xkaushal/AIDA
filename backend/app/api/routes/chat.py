@@ -9,6 +9,8 @@ router = APIRouter()
 def ask(request: ChatRequest):
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
+    if not request.user_id.strip():
+        raise HTTPException(status_code=400, detail="user_id cannot be empty.")
 
-    result = answer_question(request.question)
+    result = answer_question(request.question, request.user_id)
     return ChatResponse(**result)
