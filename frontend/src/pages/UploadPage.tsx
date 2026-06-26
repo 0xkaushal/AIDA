@@ -9,6 +9,7 @@ export default function UploadPage() {
   const [loading, setLoading] = useState(false);
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [docsLoading, setDocsLoading] = useState(true);
+  const [confirmDuplicate, setConfirmDuplicate] = useState(false);
 
   const fetchDocuments = useCallback(async () => {
     try {
@@ -23,11 +24,31 @@ export default function UploadPage() {
 
   useEffect(() => { fetchDocuments(); }, [fetchDocuments]);
 
-  const handleUpload = async () => {
+  const isDuplicate = (f: File) =>
+    documents.some((d) => d.filename === f.name);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setResult(null);
+    setError(null);
+    setConfirmDuplicate(false);
+    setFile(e.target.files?.[0] ?? null);
+  };
+
+  const handleUploadClick = () => {
+    if (!file) return;
+    if (!confirmDuplicate && isDuplicate(file)) {
+      setConfirmDuplicate(true);
+      return;
+    }
+    doUpload();
+  };
+
+  const doUpload = async () => {
     if (!file) return;
     setLoading(true);
     setError(null);
     setResult(null);
+    setConfirmDuplicate(false);
     try {
       const data = await uploadDocument(file);
       setResult(data);
@@ -53,11 +74,7 @@ export default function UploadPage() {
           <input
             type="file"
             accept=".pdf,.docx,.txt"
-            onChange={(e) => {
-              setResult(null);
-              setError(null);
-              setFile(e.target.files?.[0] ?? null);
-            }}
+            onChange={handleFileChange}
           />
           {file ? (
             <>
@@ -76,10 +93,31 @@ export default function UploadPage() {
           )}
         </div>
 
+        {confirmDuplicate && (
+          <div className="alert alert-error" style={{ marginBottom: "0.75rem" }}>
+            <div className="alert-title">⚠️ Duplicate filename</div>
+            <p style={{ margin: "0.25rem 0 0.75rem" }}>
+              <strong>{file?.name}</strong> has already been uploaded. Re-uploading will add duplicate chunks to the index.
+            </p>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <button className="btn btn-primary" style={{ flex: 1 }} onClick={doUpload}>
+                Upload anyway
+              </button>
+              <button
+                className="btn"
+                style={{ flex: 1, background: "var(--border)", color: "var(--text-h)" }}
+                onClick={() => { setConfirmDuplicate(false); setFile(null); }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         <button
           className="btn btn-primary"
-          onClick={handleUpload}
-          disabled={!file || loading}
+          onClick={handleUploadClick}
+          disabled={!file || loading || confirmDuplicate}
         >
           {loading ? (
             <><span style={{ fontSize: "0.8rem" }}>⏳</span> Processing…</>
