@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: str
     PINECONE_API_KEY: str
     PINECONE_INDEX_NAME: str
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost"]
 
 
 settings = Settings()
