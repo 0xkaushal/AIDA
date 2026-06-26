@@ -4,6 +4,8 @@ from services.document_service import process_document, list_documents
 
 router = APIRouter()
 
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
 ALLOWED_TYPES = {
     "application/pdf": ".pdf",
     "text/plain": ".txt",
@@ -32,6 +34,12 @@ async def upload_document(
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="File too large. Maximum allowed size is 10 MB.",
+        )
 
     try:
         result = process_document(file_bytes, file.filename, file.content_type, user_id, visibility)
