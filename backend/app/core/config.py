@@ -1,0 +1,16 @@
+from pathlib import Path
+from dotenv import load_dotenv
+from pydantic_settings import BaseSettings
+
+load_dotenv()
+
+
+class Settings(BaseSettings):
+    APP_NAME: str = "AIDA - AI Document Assistant"
+    APP_VERSION: str = "0.1.0"
+    OPENROUTER_API_KEY: str
+    PINECONE_API_KEY: str
+    PINECONE_INDEX_NAME: str
+
+
+settings = Settings()

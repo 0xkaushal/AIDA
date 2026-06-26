@@ -14,7 +14,7 @@ dependencies = [
     "pypdf>=4.0.0",
     "python-docx>=1.1.0",
     # Embeddings + LLM
-    "openai>=1.30.0",
+    "openrouter>=0.10.4",
     # Vector store
     "pinecone>=5.0.0",
     "pytest>=8.0.0",
