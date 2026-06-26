@@ -1,5 +1,6 @@
 import uuid
 import io
+import re
 from typing import List
 from datetime import datetime, timezone
 
@@ -16,8 +17,10 @@ index = pc.Index(settings.PINECONE_INDEX_NAME)
 
 EMBED_MODEL = "openai/text-embedding-3-small"
 EMBED_DIMENSIONS = 1024  # must match your Pinecone index dimension
-CHUNK_SIZE = 500         # characters per chunk
-CHUNK_OVERLAP = 50       # overlap between chunks
+CHUNK_SIZE = 500         # target characters per chunk
+CHUNK_OVERLAP = 50       # overlap carried forward when starting a new chunk
+
+_SENTENCE_RE = re.compile(r'(?<=[.!?])\s+')
 
 # --- In-memory document registry ---
 _documents: dict[str, dict] = {}
@@ -43,13 +46,47 @@ def extract_text(file_bytes: bytes, content_type: str) -> str:
 # --- Chunking ---
 
 def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end])
-        start += chunk_size - overlap
-    return [c.strip() for c in chunks if c.strip()]
+    """Sentence-aware chunking. Accumulates sentences up to chunk_size, then starts
+    a new chunk seeded with the last `overlap` characters of context. Any sentence
+    longer than chunk_size is hard-split as a fallback."""
+    sentences = [s.strip() for s in _SENTENCE_RE.split(text) if s.strip()]
+
+    chunks: List[str] = []
+    current: List[str] = []
+    current_len = 0
+
+    for sentence in sentences:
+        slen = len(sentence)
+
+        # Single sentence longer than chunk_size — hard-split it
+        if slen > chunk_size:
+            if current:
+                chunks.append(" ".join(current))
+                current, current_len = [], 0
+            for start in range(0, slen, chunk_size - overlap):
+                chunks.append(sentence[start : start + chunk_size])
+            continue
+
+        # Adding this sentence would overflow — flush and carry overlap forward
+        if current_len + slen + 1 > chunk_size and current:
+            chunks.append(" ".join(current))
+            overlap_buf: List[str] = []
+            overlap_len = 0
+            for s in reversed(current):
+                if overlap_len + len(s) + 1 <= overlap:
+                    overlap_buf.insert(0, s)
+                    overlap_len += len(s) + 1
+                else:
+                    break
+            current, current_len = overlap_buf, overlap_len
+
+        current.append(sentence)
+        current_len += slen + 1
+
+    if current:
+        chunks.append(" ".join(current))
+
+    return [c for c in chunks if c.strip()]
 
 
 # --- Embedding ---
