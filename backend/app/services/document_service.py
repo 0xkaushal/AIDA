@@ -18,7 +18,7 @@ index = pc.Index(settings.PINECONE_INDEX_NAME)
 EMBED_MODEL = "openai/text-embedding-3-small"
 EMBED_DIMENSIONS = 1024  # must match your Pinecone index dimension
 CHUNK_SIZE = 500         # target characters per chunk
-CHUNK_OVERLAP = 50       # overlap carried forward when starting a new chunk
+CHUNK_OVERLAP = 150      # overlap carried forward; wide enough to hold 1-2 sentences
 
 _SENTENCE_RE = re.compile(r'(?<=[.!?])\s+')
 
