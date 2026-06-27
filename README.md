@@ -17,6 +17,10 @@ AIDA is a full-stack Retrieval-Augmented Generation (RAG) application. Upload yo
 - [API Reference](#api-reference)
 - [How It Works](#how-it-works)
 - [Model Selection](#model-selection)
+- [Key Technical Decisions](#key-technical-decisions)
+- [Engineering Standards](#engineering-standards)
+- [AI Tools in Development](#ai-tools-in-development)
+- [What I'd Do Differently](#what-id-do-differently)
 - [Features](#features)
 
 ---
@@ -305,9 +309,67 @@ The LLM receives the retrieved context passages and the user's question, and gen
 - **Available via OpenRouter without a direct OpenAI account.** OpenRouter acts as a proxy, which also makes it easy to swap models (e.g. to `anthropic/claude-haiku`) by changing a single constant if needed.
 
 Alternatives I considered:
-- `anthropic/claude-haiku` — similarly priced, arguably more conservative about staying within provided context. A valid alternative; I'd evaluate both on a real document corpus before committing.
 - `openai/gpt-4o` — noticeably better reasoning but ~20× more expensive. The quality gain is not justified for a document Q&A use case where retrieval quality matters more than reasoning depth.
 - Self-hosted (`llama-3`, `mistral`) — removes data egress concerns but requires GPU infrastructure. Not viable for a POC.
+
+---
+
+## Key Technical Decisions
+
+**1. `uv` as the package manager**
+I used `uv` instead of `pip` or `poetry` because it is significantly faster, lightweight, and gives you a single tool for both virtual environment management and dependency resolution. The `uv.lock` lockfile ensures fully reproducible installs across local dev and Docker builds.
+
+**2. In-memory state for document registry and chat history**
+Both `_documents` and `_chat_history` are Python dicts/deques that live in process memory. I made this call deliberately to keep the build simple and get the core RAG functionality working quickly. The trade-off is that restarting the container wipes the document list and all chat history — the vectors in Pinecone persist but the metadata does not. For a production setup I would use a cloud-hosted database like Supabase (Postgres) or even SQLite as a first step. I've documented this in `PRODUCTION.md`.
+
+**3. SSE streaming instead of WebSockets**
+The chat response flow is strictly one-directional: server streams tokens to the client. SSE (Server-Sent Events) is the right tool for this — it's simpler to implement, works over standard HTTP, and has native browser support via `EventSource`. WebSockets add bidirectional complexity that isn't needed here. If I later wanted real-time features like server-pushed notifications, I'd revisit WebSockets.
+
+**4. OpenRouter as the LLM gateway**
+I personally prefer not managing separate API keys for every model provider. OpenRouter gives a single key and endpoint that proxies to OpenAI, Anthropic, Google, and others. More importantly, switching from `gpt-4o-mini` to `claude-haiku` or any other model is a one-line constant change — no SDK swaps, no auth changes. Any LLM gateway (AWS Bedrock, Azure AI) would serve the same purpose; OpenRouter was the quickest to set up for a POC.
+
+---
+
+## Engineering Standards
+
+**Followed:**
+- Type hints throughout the Python backend
+- Pydantic validation at every API boundary — request bodies, query params, response models
+- CORS configured explicitly with an allowlist, not wildcard
+- Docker layer caching — `pyproject.toml` and `uv.lock` copied before source so deps are cached between builds
+- Secrets in `.env` file, never in code or baked into Docker images
+- Structured logging with `key=value` pairs parseable by log aggregators
+- 44 unit tests covering positive and negative cases for both services, zero network calls
+
+**Skipped (and why):**
+- **Real authentication** — the current `user_id` is a self-reported string from localStorage. Implementing proper JWT auth would require a full auth service and was out of scope for a POC. Documented as a P0 requirement in `PRODUCTION.md`
+- **Database persistence** — in-memory state resets on restart. Acceptable for a demo; SQLite or Supabase would be the next step
+- **Prometheus metrics / distributed tracing** — logs give enough signal at this scale. Metrics and tracing are documented as next steps
+- **CI/CD pipeline** — no GitHub Actions setup. Would add automated test runs on PR and deploy-on-merge before going to production
+- **Integration tests against live Pinecone** — require real API keys and network access; the unit test suite covers the logic with mocks
+
+---
+
+## AI Tools in Development
+
+I used **GitHub Copilot** throughout this project. Honestly, this is mostly a vibe-coded application — I leaned on Copilot heavily for boilerplate, and it saved a lot of time.
+
+**What I used it for:**
+- Generating boilerplate: route handlers, Pydantic schemas, Dockerfiles, test scaffolding
+- Asking questions on how to improve both technically (chunking strategy, score thresholds, error handling patterns) and functionally (streaming UX, duplicate detection, visibility controls)
+- CSS design system structure and component patterns
+
+**Where I reviewed carefully rather than accepting blindly:**
+- The authorisation filter logic in `retrieve_chunks` — I read this line by line because a mistake here would silently expose one user's private documents to another
+- Error handling and exception chaining — Copilot's first suggestion was a bare `except Exception: pass` pattern; I rewrote this properly
+- The system prompt wording — the initial suggestion was generic; I tightened the grounding instruction and the fallback phrase myself
+
+**My do's and don'ts with AI coding assistants:**
+- ✅ Use for repetitive structure and boilerplate where the pattern is well-understood
+- ✅ Use to explore options and ask "what are the trade-offs here"
+- ✅ Use to generate test cases — it's good at covering edge cases I'd miss
+- ❌ Never accept security-sensitive code without reading it carefully
+- ❌ Never let it write the reasoning sections of docs — those must reflect your own thinking, not a summarised version of it
 
 ---
 
