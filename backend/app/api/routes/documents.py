@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query
-from schemas import UploadResponse, DocumentListResponse, DocumentInfo
-from services.document_service import process_document, list_documents
+from schemas import UploadResponse, DocumentListResponse, DocumentInfo # type: ignore
+from services.document_service import process_document, list_documents # type: ignore
 
 router = APIRouter()
 

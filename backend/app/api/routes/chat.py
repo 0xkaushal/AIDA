@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from schemas import ChatRequest, ChatResponse, ChatHistoryResponse, ChatMessage
-from services.ai_service import answer_question, clear_history, get_history, stream_answer_question
+from schemas import ChatRequest, ChatResponse, ChatHistoryResponse, ChatMessage # type: ignore
+from services.ai_service import answer_question, clear_history, get_history, stream_answer_question # type: ignore
 
 router = APIRouter()
 
