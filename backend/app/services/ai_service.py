@@ -50,6 +50,9 @@ def embed_question(question: str) -> List[float]:
         )
         return response.data[0].embedding
     except Exception as e:
+        if "429" in str(e) or "rate limit" in str(e).lower() or "too many requests" in str(e).lower():
+            logger.warning("embed_question_rate_limited")
+            raise RuntimeError("The AI model is currently rate-limited. Please wait a moment and try again.") from e
         logger.error("embed_question_failed error=%s", e)
         raise RuntimeError("Embedding service unavailable. Please try again later.") from e
 
@@ -121,6 +124,10 @@ def answer_question(question: str, user_id: str) -> dict:
             max_tokens=1024,
         )
     except Exception as e:
+        # Check for 429 rate-limit in the exception message before generic handler
+        if "429" in str(e) or "rate limit" in str(e).lower() or "too many requests" in str(e).lower():
+            logger.warning("llm_rate_limited user_id=%s", user_id)
+            raise RuntimeError("The AI model is currently rate-limited. Please wait a moment and try again.") from e
         logger.error("llm_call_failed user_id=%s error=%s", user_id, e)
         raise RuntimeError("Language model unavailable. Please try again later.") from e
     answer = response.choices[0].message.content
@@ -173,6 +180,12 @@ async def stream_answer_question(
                     "stream": True,
                 },
             ) as response:
+                # Check for rate-limit before consuming the stream
+                if response.status_code == 429:
+                    logger.warning("stream_rate_limited user_id=%s", user_id)
+                    yield f'data: {json.dumps({"type": "error", "message": "The AI model is currently rate-limited. Please wait a moment and try again."})}\n\n'
+                    yield "data: [DONE]\n\n"
+                    return
                 async for line in response.aiter_lines():
                     if not line.startswith("data: "):
                         continue

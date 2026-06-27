@@ -103,6 +103,9 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
         )
         return [item.embedding for item in response.data]
     except Exception as e:
+        if "429" in str(e) or "rate limit" in str(e).lower() or "too many requests" in str(e).lower():
+            logger.warning("embed_texts_rate_limited chunks=%d", len(texts))
+            raise RuntimeError("The AI model is currently rate-limited. Please wait a moment and try again.") from e
         logger.error("embedding_failed chunks=%d error=%s", len(texts), e)
         raise RuntimeError("Embedding service unavailable. Please try again later.") from e
 
