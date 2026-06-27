@@ -2,11 +2,11 @@
 Tests for services/ai_service.py
 
 Covers: Pinecone authorisation filter, score threshold, source deduplication,
-        null-metadata safety, and in-memory chat history (append/clear/cap/isolation).
+        null-metadata safety, in-memory chat history, and error handling (negative tests).
 """
 import pytest
-from unittest.mock import MagicMock
-from services import ai_service # type: ignore
+from unittest.mock import MagicMock, patch
+from services import ai_service  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -156,3 +156,83 @@ class TestChatHistory:
         ai_service.clear_history("user-b")
         ai_service._append_history("user-a", "user", "A message")
         assert ai_service.get_history("user-b") == []
+
+
+# ---------------------------------------------------------------------------
+# Negative tests — error handling
+# ---------------------------------------------------------------------------
+
+class TestEmbedQuestionErrors:
+    def test_openrouter_failure_raises_runtime_error(self, monkeypatch):
+        mock_client = MagicMock()
+        mock_client.embeddings.generate.side_effect = Exception("API down")
+        monkeypatch.setattr(ai_service, "openrouter_client", mock_client)
+        with pytest.raises(RuntimeError, match="Embedding service unavailable"):
+            ai_service.embed_question("what is this?")
+
+    def test_original_exception_is_chained(self, monkeypatch):
+        mock_client = MagicMock()
+        original = Exception("network error")
+        mock_client.embeddings.generate.side_effect = original
+        monkeypatch.setattr(ai_service, "openrouter_client", mock_client)
+        with pytest.raises(RuntimeError) as exc_info:
+            ai_service.embed_question("question")
+        assert exc_info.value.__cause__ is original
+
+
+class TestRetrieveChunksErrors:
+    def test_pinecone_failure_raises_runtime_error(self, monkeypatch):
+        mock_index = MagicMock()
+        mock_index.query.side_effect = Exception("pinecone timeout")
+        monkeypatch.setattr(ai_service, "index", mock_index)
+        with pytest.raises(RuntimeError, match="Vector store unavailable"):
+            ai_service.retrieve_chunks([0.0] * 1024, "alice")
+
+    def test_pinecone_original_exception_is_chained(self, monkeypatch):
+        mock_index = MagicMock()
+        original = Exception("connection reset")
+        mock_index.query.side_effect = original
+        monkeypatch.setattr(ai_service, "index", mock_index)
+        with pytest.raises(RuntimeError) as exc_info:
+            ai_service.retrieve_chunks([0.0] * 1024, "alice")
+        assert exc_info.value.__cause__ is original
+
+
+class TestAnswerQuestionErrors:
+    def test_embed_failure_propagates(self, monkeypatch):
+        mock_client = MagicMock()
+        mock_client.embeddings.generate.side_effect = Exception("embed down")
+        monkeypatch.setattr(ai_service, "openrouter_client", mock_client)
+        with pytest.raises(RuntimeError, match="Embedding service unavailable"):
+            ai_service.answer_question("a question", "alice")
+
+    def test_pinecone_failure_propagates(self, monkeypatch):
+        mock_client = MagicMock()
+        embed_resp = MagicMock()
+        embed_resp.data = [MagicMock(embedding=[0.1] * 1024)]
+        mock_client.embeddings.generate.return_value = embed_resp
+        monkeypatch.setattr(ai_service, "openrouter_client", mock_client)
+        mock_index = MagicMock()
+        mock_index.query.side_effect = Exception("pinecone down")
+        monkeypatch.setattr(ai_service, "index", mock_index)
+        with pytest.raises(RuntimeError, match="Vector store unavailable"):
+            ai_service.answer_question("a question", "alice")
+
+    def test_llm_failure_raises_runtime_error(self, monkeypatch, patch_index):
+        # Pinecone returns a valid result
+        result = MagicMock()
+        m = MagicMock()
+        m.metadata = {"text": "content", "source": "doc.pdf", "user_id": "alice", "visibility": "private"}
+        m.score = 0.9
+        result.matches = [m]
+        patch_index.query.return_value = result
+        # Embedding succeeds
+        mock_client = MagicMock()
+        embed_resp = MagicMock()
+        embed_resp.data = [MagicMock(embedding=[0.1] * 1024)]
+        mock_client.embeddings.generate.return_value = embed_resp
+        # LLM fails
+        mock_client.chat.send.side_effect = Exception("LLM timeout")
+        monkeypatch.setattr(ai_service, "openrouter_client", mock_client)
+        with pytest.raises(RuntimeError, match="Language model unavailable"):
+            ai_service.answer_question("a question", "alice")
