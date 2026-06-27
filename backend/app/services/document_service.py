@@ -95,12 +95,16 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
 # --- Embedding ---
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
-    response = openrouter_client.embeddings.generate(
-        model=EMBED_MODEL,
-        input=texts,
-        dimensions=EMBED_DIMENSIONS,
-    )
-    return [item.embedding for item in response.data]
+    try:
+        response = openrouter_client.embeddings.generate(
+            model=EMBED_MODEL,
+            input=texts,
+            dimensions=EMBED_DIMENSIONS,
+        )
+        return [item.embedding for item in response.data]
+    except Exception as e:
+        logger.error("embedding_failed chunks=%d error=%s", len(texts), e)
+        raise RuntimeError("Embedding service unavailable. Please try again later.") from e
 
 
 # --- Pinecone upsert ---
@@ -114,7 +118,11 @@ def store_chunks(chunks: List[str], embeddings: List[List[float]], filename: str
         }
         for chunk, embedding in zip(chunks, embeddings)
     ]
-    index.upsert(vectors=vectors)
+    try:
+        index.upsert(vectors=vectors)
+    except Exception as e:
+        logger.error("pinecone_upsert_failed filename=%s user_id=%s error=%s", filename, user_id, e)
+        raise RuntimeError("Vector store unavailable. Please try again later.") from e
     return len(vectors)
 
 
@@ -135,10 +143,6 @@ def process_document(file_bytes: bytes, filename: str, content_type: str, user_i
 
     count = store_chunks(chunks, embeddings, filename, user_id, visibility)
     logger.info("upserted user_id=%s filename=%s vectors=%d", user_id, filename, count)
-
-    chunks = chunk_text(text)
-    embeddings = embed_texts(chunks)
-    count = store_chunks(chunks, embeddings, filename, user_id, visibility)
 
     _documents[f"{user_id}:{filename}"] = {
         "filename": filename,

@@ -22,7 +22,10 @@ def ask(request: ChatRequest):
     if not request.user_id.strip():
         raise HTTPException(status_code=400, detail="user_id cannot be empty.")
 
-    result = answer_question(request.question, request.user_id)
+    try:
+        result = answer_question(request.question, request.user_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     return ChatResponse(**result)
 
 

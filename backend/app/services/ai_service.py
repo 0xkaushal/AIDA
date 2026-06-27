@@ -42,21 +42,29 @@ def clear_history(user_id: str) -> None:
 
 
 def embed_question(question: str) -> List[float]:
-    response = openrouter_client.embeddings.generate(
-        model=EMBED_MODEL,
-        input=[question],
-        dimensions=EMBED_DIMENSIONS,
-    )
-    return response.data[0].embedding
+    try:
+        response = openrouter_client.embeddings.generate(
+            model=EMBED_MODEL,
+            input=[question],
+            dimensions=EMBED_DIMENSIONS,
+        )
+        return response.data[0].embedding
+    except Exception as e:
+        logger.error("embed_question_failed error=%s", e)
+        raise RuntimeError("Embedding service unavailable. Please try again later.") from e
 
 
 def retrieve_chunks(question_embedding: List[float], user_id: str) -> Tuple[List[str], List[str]]:
-    results = index.query(
-        vector=question_embedding,
-        top_k=TOP_K,
-        include_metadata=True,
-        filter={"$or": [{"user_id": {"$eq": user_id}}, {"visibility": {"$eq": "public"}}]},
-    )
+    try:
+        results = index.query(
+            vector=question_embedding,
+            top_k=TOP_K,
+            include_metadata=True,
+            filter={"$or": [{"user_id": {"$eq": user_id}}, {"visibility": {"$eq": "public"}}]},
+        )
+    except Exception as e:
+        logger.error("pinecone_query_failed user_id=%s error=%s", user_id, e)
+        raise RuntimeError("Vector store unavailable. Please try again later.") from e
     # Post-filter: authorisation AND relevance score threshold
     authorized = [
         m for m in results.matches
@@ -106,11 +114,15 @@ def answer_question(question: str, user_id: str) -> dict:
         {"role": "user", "content": question},
     ]
 
-    response = openrouter_client.chat.send(
-        model=CHAT_MODEL,
-        messages=messages,
-        max_tokens=1024,
-    )
+    try:
+        response = openrouter_client.chat.send(
+            model=CHAT_MODEL,
+            messages=messages,
+            max_tokens=1024,
+        )
+    except Exception as e:
+        logger.error("llm_call_failed user_id=%s error=%s", user_id, e)
+        raise RuntimeError("Language model unavailable. Please try again later.") from e
     answer = response.choices[0].message.content
     logger.info("answer_done user_id=%s answer_len=%d sources=%s", user_id, len(answer), sources)
 
@@ -145,35 +157,46 @@ async def stream_answer_question(
     ]
 
     full_answer = ""
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        async with client.stream(
-            "POST",
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": CHAT_MODEL,
-                "messages": messages,
-                "max_tokens": 1024,
-                "stream": True,
-            },
-        ) as response:
-            async for line in response.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                raw = line[6:]  # strip "data: " prefix
-                if raw == "[DONE]":
-                    break
-                try:
-                    payload = json.loads(raw)
-                    token = payload["choices"][0]["delta"].get("content", "")
-                    if token:
-                        full_answer += token
-                        yield f'data: {json.dumps({"type": "token", "token": token})}\n\n'
-                except (KeyError, json.JSONDecodeError):
-                    continue
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream(
+                "POST",
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": CHAT_MODEL,
+                    "messages": messages,
+                    "max_tokens": 1024,
+                    "stream": True,
+                },
+            ) as response:
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    raw = line[6:]  # strip "data: " prefix
+                    if raw == "[DONE]":
+                        break
+                    try:
+                        payload = json.loads(raw)
+                        token = payload["choices"][0]["delta"].get("content", "")
+                        if token:
+                            full_answer += token
+                            yield f'data: {json.dumps({"type": "token", "token": token})}\n\n'
+                    except (KeyError, json.JSONDecodeError):
+                        continue
+    except httpx.TimeoutException:
+        logger.error("stream_timeout user_id=%s", user_id)
+        yield f'data: {json.dumps({"type": "error", "message": "The request timed out. Please try again."})}\n\n'
+        yield "data: [DONE]\n\n"
+        return
+    except Exception as e:
+        logger.error("stream_llm_failed user_id=%s error=%s", user_id, e)
+        yield f'data: {json.dumps({"type": "error", "message": "Language model unavailable. Please try again later."})}\n\n'
+        yield "data: [DONE]\n\n"
+        return
 
     # Persist the full exchange after streaming completes
     _append_history(user_id, "user", question)

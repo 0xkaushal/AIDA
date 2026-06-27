@@ -45,6 +45,8 @@ async def upload_document(
         result = process_document(file_bytes, file.filename, file.content_type, user_id, visibility)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
     return UploadResponse(
         message="Document processed and stored successfully.",
