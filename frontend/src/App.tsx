@@ -3,17 +3,26 @@ import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
 import UploadPage from "./pages/UploadPage";
 import ChatPage from "./pages/ChatPage";
 import UserIdGate, { getUserId, clearUserId } from "./components/UserIdGate";
+import OnboardingTour, { hasTourBeenSeen } from "./components/OnboardingTour";
 import "./App.css";
 
 export default function App() {
   const [userId, setUserId] = useState<string | null>(getUserId);
+  const [showTour, setShowTour] = useState(false);
+
+  const handleConfirmUserId = (id: string) => {
+    const isNew = !hasTourBeenSeen();
+    setUserId(id);
+    if (isNew) setShowTour(true);
+  };
 
   if (!userId) {
-    return <UserIdGate onConfirm={setUserId} />;
+    return <UserIdGate onConfirm={handleConfirmUserId} />;
   }
 
   return (
     <BrowserRouter>
+      {showTour && <OnboardingTour onDismiss={() => setShowTour(false)} />}
       <nav className="navbar">
         <NavLink to="/" className="navbar-brand">
           <div className="navbar-logo">A</div>

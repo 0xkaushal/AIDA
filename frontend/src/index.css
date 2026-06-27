@@ -612,3 +612,17 @@ body { margin: 0; }
   color: var(--accent);
   font-weight: 700;
 }
+
+/* ── Onboarding tour nav highlights ─────────── */
+@keyframes tour-nav-pulse {
+  0%, 100% { background: rgba(167, 139, 250, 0.25); outline-color: rgba(167, 139, 250, 0.7); }
+  50%       { background: rgba(167, 139, 250, 0.06); outline-color: rgba(167, 139, 250, 0.2); }
+}
+
+body.tour-highlight-upload .navbar-link[href="/"],
+body.tour-highlight-chat   .navbar-link[href="/chat"] {
+  color: #c4b5fd;
+  animation: tour-nav-pulse 1s ease-in-out infinite;
+  outline: 2px solid rgba(167, 139, 250, 0.6);
+  outline-offset: 2px;
+}
