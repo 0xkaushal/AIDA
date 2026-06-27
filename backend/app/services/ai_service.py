@@ -1,6 +1,9 @@
 from typing import List, Tuple, AsyncGenerator
 from collections import deque
 import json
+import logging
+
+logger = logging.getLogger("aida.ai_service")
 
 import httpx
 from openrouter import OpenRouter
@@ -65,6 +68,10 @@ def retrieve_chunks(question_embedding: List[float], user_id: str) -> Tuple[List
         and m.score is not None
         and m.score >= SCORE_THRESHOLD
     ]
+    logger.info(
+        "retrieve user_id=%s candidates=%d authorized=%d",
+        user_id, len(results.matches), len(authorized),
+    )
     texts = [m.metadata["text"] for m in authorized if m.metadata.get("text")]
     sources = list({m.metadata["source"] for m in authorized if m.metadata.get("source")})
     return texts, sources
@@ -84,10 +91,12 @@ def build_system_prompt(chunks: List[str]) -> str:
 
 
 def answer_question(question: str, user_id: str) -> dict:
+    logger.info("answer_start user_id=%s question_len=%d", user_id, len(question))
     embedding = embed_question(question)
     chunks, sources = retrieve_chunks(embedding, user_id)
 
     if not chunks:
+        logger.warning("no_chunks_found user_id=%s", user_id)
         return {"answer": "No relevant documents found for your account.", "sources": []}
 
     # Build messages: system (RAG context) + history + current question
@@ -103,6 +112,7 @@ def answer_question(question: str, user_id: str) -> dict:
         max_tokens=1024,
     )
     answer = response.choices[0].message.content
+    logger.info("answer_done user_id=%s answer_len=%d sources=%s", user_id, len(answer), sources)
 
     # Persist this exchange
     _append_history(user_id, "user", question)
@@ -115,10 +125,12 @@ async def stream_answer_question(
     question: str, user_id: str
 ) -> AsyncGenerator[str, None]:
     """Async generator yielding SSE-formatted strings for a streaming response."""
+    logger.info("stream_start user_id=%s question_len=%d", user_id, len(question))
     embedding = embed_question(question)
     chunks, sources = retrieve_chunks(embedding, user_id)
 
     if not chunks:
+        logger.warning("stream_no_chunks user_id=%s", user_id)
         yield f'data: {json.dumps({"type": "error", "message": "No relevant documents found for your account."})}\n\n'
         yield "data: [DONE]\n\n"
         return

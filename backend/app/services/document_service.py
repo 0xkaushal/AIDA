@@ -1,8 +1,11 @@
 import uuid
 import io
 import re
+import logging
 from typing import List
 from datetime import datetime, timezone
+
+logger = logging.getLogger("aida.document_service")
 
 import pypdf
 from openrouter import OpenRouter
@@ -118,9 +121,20 @@ def store_chunks(chunks: List[str], embeddings: List[List[float]], filename: str
 # --- Main pipeline ---
 
 def process_document(file_bytes: bytes, filename: str, content_type: str, user_id: str, visibility: str = "private") -> dict:
+    logger.info("pipeline_start user_id=%s filename=%s size_bytes=%d visibility=%s", user_id, filename, len(file_bytes), visibility)
     text = extract_text(file_bytes, content_type)
     if not text.strip():
+        logger.warning("no_text_extracted user_id=%s filename=%s", user_id, filename)
         raise ValueError("No text could be extracted from the file.")
+
+    chunks = chunk_text(text)
+    logger.info("chunked user_id=%s filename=%s chars=%d chunks=%d", user_id, filename, len(text), len(chunks))
+
+    embeddings = embed_texts(chunks)
+    logger.info("embedded user_id=%s filename=%s vectors=%d", user_id, filename, len(embeddings))
+
+    count = store_chunks(chunks, embeddings, filename, user_id, visibility)
+    logger.info("upserted user_id=%s filename=%s vectors=%d", user_id, filename, count)
 
     chunks = chunk_text(text)
     embeddings = embed_texts(chunks)
