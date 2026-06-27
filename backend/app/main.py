@@ -3,8 +3,8 @@ import time
 import uuid
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from core.config import settings
-from api.routes import health, documents, chat
+from core.config import settings # type: ignore
+from api.routes import health, documents, chat # type: ignore
 
 # ---------------------------------------------------------------------------
 # Logging configuration

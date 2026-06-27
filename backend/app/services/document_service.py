@@ -11,7 +11,7 @@ import pypdf
 from openrouter import OpenRouter
 from pinecone import Pinecone
 
-from core.config import settings
+from core.config import settings # type: ignore
 
 # --- Clients ---
 openrouter_client = OpenRouter(api_key=settings.OPENROUTER_API_KEY)
