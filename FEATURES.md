@@ -16,13 +16,14 @@ Complete documentation of every feature in the application.
 8. [Chat History (In-Memory)](#8-chat-history-in-memory)
 9. [Source Attribution](#9-source-attribution)
 10. [Chat Thread UI](#10-chat-thread-ui)
-11. [Typing Indicator](#11-typing-indicator)
+11. [Typing Indicator / Streaming](#11-typing-indicator--streaming)
 12. [Light / Dark Mode](#12-light--dark-mode)
 13. [Responsive Layout](#13-responsive-layout)
 14. [Sticky Navbar with Active Links](#14-sticky-navbar-with-active-links)
 15. [Docker Compose Deployment](#15-docker-compose-deployment)
 16. [Health Check Endpoint](#16-health-check-endpoint)
 17. [SPA Routing](#17-spa-routing)
+18. [Onboarding Tour](#18-onboarding-tour)
 
 ---
 
@@ -62,7 +63,7 @@ Users can upload PDF or TXT files. The file is parsed, split into overlapping te
 | Step | Detail |
 |---|---|
 | Parse | PDF → `pypdf.PdfReader`, TXT → `bytes.decode("utf-8")` |
-| Chunk | 500-character sliding window, 50-character overlap |
+| Chunk | 500-character sentence-aware sliding window, 150-character overlap |
 | Embed | `openrouter.embeddings.generate`, model `openai/text-embedding-3-small`, 1024 dimensions |
 | Store | `pinecone.Index.upsert` — one vector per chunk with metadata: `{ text, source, user_id, visibility }` |
 | Register | In-memory `_documents` dict updated with upload stats |
@@ -182,13 +183,14 @@ Question
   └─► embed (text-embedding-3-small, 1024 dims)
         └─► Pinecone query
               filter: user's docs + public docs
-              top_k: 5
-              └─► Python post-filter (authorisation safety net)
+              top_k: 8  (over-fetch; low-score results pruned below)
+              └─► Python post-filter:
+                    authorisation check + score >= 0.25
                     └─► build messages:
-                          [system: context from retrieved chunks]
+                          [system: numbered context passages]
                           [chat history: last 10 turns]
                           [user: question]
-                          └─► gpt-4o-mini (max_tokens: 1024)
+                          └─► gpt-4o-mini (streamed via SSE)
                                 └─► answer + source filenames
 ```
 
@@ -197,13 +199,13 @@ Question
 |---|---|
 | Embedding model | `openai/text-embedding-3-small` |
 | Embedding dimensions | 1024 |
-| Retrieval top-k | 5 |
+| Retrieval top-k | 8 (over-fetch) |
+| Score threshold | 0.25 (cosine similarity) |
 | LLM model | `openai/gpt-4o-mini` |
-| Max output tokens | 1024 |
 | Chat history window | Last 10 turns (20 messages) |
 
 ### Prompt design
-The system prompt instructs the model to answer **only from the provided context** and to say "I don't know" if the answer is absent. This prevents hallucination beyond the uploaded documents.
+The system prompt instructs the model to answer **only from the provided context** (passages are numbered `[1]`, `[2]`… so the model can cite them) and to say "I couldn't find that in the uploaded documents." if the answer is absent. This prevents hallucination beyond the uploaded documents.
 
 ### No-results handling
 If Pinecone returns zero authorised chunks, the API returns `"No relevant documents found for your account."` without calling the LLM.
@@ -301,15 +303,30 @@ The chat page renders a full-height scrollable conversation thread with distinct
 
 ---
 
-## 11. Typing Indicator
+## 11. Typing Indicator / Streaming
 
 ### What it does
-While the backend is processing a question, a pulsing three-dot animation appears in an AI message bubble to indicate the model is thinking.
+Chat responses stream token-by-token from the backend. Tokens appear live in the AI bubble as they arrive — no waiting for the full response. While the first token is still in transit, a pulsing three-dot animation is shown.
 
 ### How it works
-- `loading` state set to `true` before the API call, `false` in `finally`
-- When `loading` is `true`, an extra AI bubble is rendered containing `.typing-dots`
-- CSS `@keyframes bounce` animates each dot with a staggered delay (0ms, 200ms, 400ms)
+
+**Backend** (`POST /api/v1/chat/stream`):
+- `stream_answer_question()` is an `async` generator that first yields a `{type: "sources"}` SSE event, then yields `{type: "token"}` events for each streamed token from the OpenRouter API
+- FastAPI's `StreamingResponse` sends this as `text/event-stream` with headers `X-Accel-Buffering: no` and `Cache-Control: no-cache`
+
+**Frontend** (`ChatPage.tsx`, `api.ts`):
+- `streamQuestion()` uses the Fetch API's `ReadableStream` to consume SSE events incrementally
+- `onSources` callback fires on the first event; `onToken` callback fires for each token
+- `streamingContent` and `streamingSources` React state are updated on every token — the bubble re-renders live
+- On completion, the assembled message is moved into the `messages` array and streaming state is cleared
+- Typing dots (`@keyframes bounce`, 0ms / 200ms / 400ms stagger) are shown only before the first token arrives
+
+**SSE event format**:
+```
+data: {"type": "sources", "sources": ["report.pdf"]}
+data: {"type": "token",   "token":   "The "}
+data: {"type": "token",   "token":   "answer is..."}
+```
 
 ---
 
@@ -415,6 +432,30 @@ Navigating directly to `/chat` (or refreshing on that route) returns the React a
 - React Router DOM handles `/` and `/chat` client-side
 - In development: Vite's dev server handles all routes
 - In production (Docker): the frontend Nginx container's default config has `try_files $uri $uri/ /index.html` enabled by default, so any unmatched path falls back to `index.html` and React Router takes over
+
+---
+
+## 18. Onboarding Tour
+
+### What it does
+First-time users see a 3-step guided tour immediately after entering their user ID. The tour introduces AIDA, then points to the Upload and Chat nav buttons with a visual arrow and pulsing highlight.
+
+### How it works
+- **Component**: `OnboardingTour.tsx`
+- **Trigger**: `App.tsx` checks `hasTourBeenSeen()` (reads `aida_tour_seen` from `localStorage`) when the user confirms their ID. If not seen, `showTour` state is set to `true` and the tour overlay is rendered.
+- **Persistence**: On dismiss ("Got it" or "Skip"), `localStorage.setItem("aida_tour_seen", "1")` is written. Returning users never see the tour again.
+
+### Steps
+| Step | Content | Arrow |
+|---|---|---|
+| 1 | Welcome — what AIDA does | None (centered modal) |
+| 2 | Upload a document | Upward triangle arrow pointing at **Upload** nav link + pulse highlight |
+| 3 | Ask questions | Upward triangle arrow pointing at **Chat** nav link + pulse highlight |
+
+### Arrow & highlight mechanism
+- For steps 2 and 3 the tour card is positioned in the top-left corner directly below the navbar
+- A CSS `border-trick` triangle (`width: 0; height: 0; border-left/right/bottom`) sits at the top of the card, offset by `arrowLeft` to align with the target button
+- A `body` class (`tour-highlight-upload` / `tour-highlight-chat`) is added via `useEffect` while that step is active; CSS selectors on the actual `<NavLink>` elements apply a pulsing `outline` animation
 
 ---
 
