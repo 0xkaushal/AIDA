@@ -25,6 +25,7 @@ export default function ChatPage({ userId }: { userId: string }) {
           msgs.map((m) => ({
             role: m.role === "assistant" ? "ai" : "user",
             content: m.content,
+            sources: m.sources,
           }))
         );
       })

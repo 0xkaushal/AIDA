@@ -25,8 +25,8 @@ export async function uploadDocument(file: File, userId: string, visibility: "pu
   return data;
 }
 
-export async function getChatHistory(userId: string): Promise<{ role: string; content: string }[]> {
-  const { data } = await api.get<{ messages: { role: string; content: string }[] }>(
+export async function getChatHistory(userId: string): Promise<{ role: string; content: string; sources?: string[] }[]> {
+  const { data } = await api.get<{ messages: { role: string; content: string; sources?: string[] }[] }>(
     "/api/v1/chat/history",
     { params: { user_id: userId } }
   );
