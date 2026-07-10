@@ -7,3 +7,6 @@ node_modules/
 dist/
 .venv/
 .uv/
+
+# Eval results — keep the directory, ignore run outputs
+backend/eval/results/*.json
