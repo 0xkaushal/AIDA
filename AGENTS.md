@@ -119,14 +119,16 @@ uv run python -m eval.run_eval --user_id eval_user --skip-llm-metrics   # contex
 uv run python -m eval.run_eval --user_id eval_user --output results/my_run.json
 ```
 
-Three metrics — all return `[0.0, 1.0]`:
-- **context_recall** — string match, no LLM: fraction of `key_facts` found in retrieved chunks
+Powered by **RAGAS 0.4.x** (`ragas`, `langchain-openai`, `langchain-google-vertexai` are required deps). Three metrics — all return `[0.0, 1.0]`:
+- **context_recall** — LLM judge: were all facts in `ground_truth` present in retrieved context?
 - **faithfulness** — LLM judge: fraction of answer claims supported by context
-- **answer_relevance** — LLM judge: does the answer address the question?
+- **answer_relevancy** — LLM + embedding judge: does the answer address the question?
 
-Results are written to `backend/eval/results/run_<timestamp>.json` (gitignored). Exit code 1 if avg faithfulness or answer_relevance < 0.7, or if any case errored.
+Results are written to `backend/eval/results/run_<timestamp>.json` (gitignored). Exit code 1 if avg faithfulness or answer_relevancy < 0.7, or if any case errored.
 
-To add test cases: edit `backend/eval/dataset.py` — add `EvalCase` entries with `question`, `ground_truth`, `key_facts`, and optionally `expected_sources` and `tags`. Documents referenced must already be indexed in Pinecone under the eval `user_id`.
+To add test cases: edit `backend/eval/dataset.py` — add `EvalCase` entries with `question`, `ground_truth`, and optionally `expected_sources` and `tags`. Documents referenced must already be indexed in Pinecone under the eval `user_id`.
+
+**RAGAS wiring quirk**: RAGAS 0.4.3 has a broken import (`langchain_community.chat_models.vertexai`). On fresh install, patch `.venv/lib/python3.11/site-packages/ragas/llms/base.py` lines 12-13 to import from `langchain_google_vertexai` instead. The metrics use `_Faithfulness`, `_ResponseRelevancy`, `_LLMContextRecall` (underscore-prefixed classes) — these are the stable `Metric` subclasses that work with `evaluate()`. The non-underscore versions in `ragas.metrics.collections` use a different base class and are incompatible with `evaluate()`.
 
 ---
 
