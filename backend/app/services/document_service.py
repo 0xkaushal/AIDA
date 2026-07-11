@@ -12,6 +12,7 @@ from openrouter import OpenRouter
 from pinecone import Pinecone
 
 from core.config import settings # type: ignore
+from core.langfuse import get_langfuse
 
 # --- Clients ---
 openrouter_client = OpenRouter(api_key=settings.OPENROUTER_API_KEY)
@@ -132,20 +133,94 @@ def store_chunks(chunks: List[str], embeddings: List[List[float]], filename: str
 # --- Main pipeline ---
 
 def process_document(file_bytes: bytes, filename: str, content_type: str, user_id: str, visibility: str = "private") -> dict:
+    """Full ingestion pipeline: parse → chunk → embed → upsert.
+    Creates one Langfuse trace with four child spans."""
     logger.info("pipeline_start user_id=%s filename=%s size_bytes=%d visibility=%s", user_id, filename, len(file_bytes), visibility)
+
+    lf = get_langfuse()
+    trace = lf.start_observation(
+        name="document-upload",
+        as_type="span",
+        input={"filename": filename, "size_bytes": len(file_bytes), "visibility": visibility},
+        metadata={"user_id": user_id},
+    )
+
+    # --- Span: parse ---
+    parse_span = trace.start_observation(
+        name="parse",
+        as_type="span",
+        input={"filename": filename, "content_type": content_type},
+    )
     text = extract_text(file_bytes, content_type)
     if not text.strip():
         logger.warning("no_text_extracted user_id=%s filename=%s", user_id, filename)
+        parse_span.update(metadata={"error": "no_text_extracted"})
+        parse_span.end()
+        trace.update(metadata={"error": "no_text_extracted"})
+        trace.end()
+        lf.flush()
         raise ValueError("No text could be extracted from the file.")
+    parse_span.update(output={"characters": len(text)})
+    parse_span.end()
 
+    # --- Span: chunk ---
+    chunk_span = trace.start_observation(
+        name="chunk",
+        as_type="span",
+        input={"characters": len(text), "chunk_size": CHUNK_SIZE, "overlap": CHUNK_OVERLAP},
+    )
     chunks = chunk_text(text)
     logger.info("chunked user_id=%s filename=%s chars=%d chunks=%d", user_id, filename, len(text), len(chunks))
+    chunk_span.update(output={"chunks_count": len(chunks)})
+    chunk_span.end()
 
-    embeddings = embed_texts(chunks)
+    # --- Span: embed ---
+    embed_span = trace.start_observation(
+        name="embed",
+        as_type="embedding",
+        input={"chunks_count": len(chunks)},
+        model=EMBED_MODEL,
+    )
+    try:
+        embeddings = embed_texts(chunks)
+    except Exception as e:
+        embed_span.update(metadata={"error": str(e)})
+        embed_span.end()
+        trace.update(metadata={"error": str(e)})
+        trace.end()
+        lf.flush()
+        raise
     logger.info("embedded user_id=%s filename=%s vectors=%d", user_id, filename, len(embeddings))
+    embed_span.update(output={"vectors_count": len(embeddings)})
+    embed_span.end()
 
-    count = store_chunks(chunks, embeddings, filename, user_id, visibility)
+    # --- Span: upsert ---
+    upsert_span = trace.start_observation(
+        name="upsert",
+        as_type="span",
+        input={"vectors_count": len(embeddings), "filename": filename},
+    )
+    try:
+        count = store_chunks(chunks, embeddings, filename, user_id, visibility)
+    except Exception as e:
+        upsert_span.update(metadata={"error": str(e)})
+        upsert_span.end()
+        trace.update(metadata={"error": str(e)})
+        trace.end()
+        lf.flush()
+        raise
     logger.info("upserted user_id=%s filename=%s vectors=%d", user_id, filename, count)
+    upsert_span.update(output={"vectors_stored": count})
+    upsert_span.end()
+
+    trace.update(output={
+        "filename": filename,
+        "chunks_stored": count,
+        "characters": len(text),
+        "visibility": visibility,
+    })
+    trace.end()
+    lf.flush()
 
     _documents[f"{user_id}:{filename}"] = {
         "filename": filename,

@@ -17,6 +17,10 @@ _mock_settings.PINECONE_INDEX_NAME = "test-index"
 _mock_settings.APP_NAME = "AIDA"
 _mock_settings.APP_VERSION = "0.1.0"
 _mock_settings.CORS_ORIGINS = ["http://localhost:5173"]
+# Empty Langfuse keys → no-op stub is used; tests never need real credentials
+_mock_settings.LANGFUSE_SECRET_KEY = ""
+_mock_settings.LANGFUSE_PUBLIC_KEY = ""
+_mock_settings.LANGFUSE_HOST = "https://cloud.langfuse.com"
 
 _core_config_stub = MagicMock()
 _core_config_stub.settings = _mock_settings
@@ -26,3 +30,10 @@ sys.modules.setdefault("core.config", _core_config_stub)
 sys.modules.setdefault("openrouter", MagicMock())
 sys.modules.setdefault("pinecone", MagicMock())
 sys.modules.setdefault("pypdf", MagicMock())
+
+# Reset the Langfuse singleton so it re-initialises with the mock settings
+# (no-op path, because LANGFUSE_SECRET_KEY is empty above)
+if "core.langfuse" in sys.modules:
+    lf_mod = sys.modules["core.langfuse"]
+    lf_mod._client = None
+    lf_mod._enabled = False

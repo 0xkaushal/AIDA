@@ -13,5 +13,12 @@ class Settings(BaseSettings):
     PINECONE_INDEX_NAME: str
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost"]
 
+    # Langfuse observability — all three must be set to enable tracing.
+    # Leave unset (or empty) to disable Langfuse silently; the app runs normally.
+    # Get keys from https://cloud.langfuse.com or your self-hosted instance.
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_HOST: str = "https://cloud.langfuse.com"
+
 
 settings = Settings()

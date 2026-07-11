@@ -10,6 +10,7 @@ from openrouter import OpenRouter
 from pinecone import Pinecone
 
 from core.config import settings
+from core.langfuse import get_langfuse
 from services.document_service import EMBED_MODEL, EMBED_DIMENSIONS
 
 # --- Clients ---
@@ -102,21 +103,68 @@ def build_system_prompt(chunks: List[str]) -> str:
 
 
 def answer_question(question: str, user_id: str) -> dict:
+    """Non-streaming RAG answer. Creates one Langfuse trace with three spans:
+    embed → retrieve → generate."""
     logger.info("answer_start user_id=%s question_len=%d", user_id, len(question))
-    embedding = embed_question(question)
+
+    lf = get_langfuse()
+    trace = lf.start_observation(
+        name="rag-answer",
+        as_type="span",
+        input={"question": question},
+        metadata={"user_id": user_id, "mode": "non-streaming"},
+    )
+
+    # --- Span: embed ---
+    embed_span = trace.start_observation(
+        name="embed",
+        as_type="embedding",
+        input={"question": question},
+    )
+    try:
+        embedding = embed_question(question)
+    except Exception as e:
+        embed_span.update(metadata={"error": str(e)})
+        embed_span.end()
+        trace.update(metadata={"error": str(e)})
+        trace.end()
+        lf.flush()
+        raise
+    embed_span.update(
+        output={"dimensions": len(embedding)},
+        model=EMBED_MODEL,
+    )
+    embed_span.end()
+
+    # --- Span: retrieve ---
+    retrieve_span = trace.start_observation(
+        name="retrieve",
+        as_type="retriever",
+        input={"user_id": user_id},
+    )
     chunks, sources = retrieve_chunks(embedding, user_id)
+    retrieve_span.update(output={"chunks_count": len(chunks), "sources": sources})
+    retrieve_span.end()
 
     if not chunks:
         logger.warning("no_chunks_found user_id=%s", user_id)
+        trace.update(output={"answer": "No relevant documents found.", "sources": []})
+        trace.end()
+        lf.flush()
         return {"answer": "No relevant documents found for your account.", "sources": []}
 
-    # Build messages: system (RAG context) + history + current question
+    # --- Span: generate ---
     messages = [
         {"role": "system", "content": build_system_prompt(chunks)},
         *get_history(user_id),
         {"role": "user", "content": question},
     ]
-
+    gen_span = trace.start_observation(
+        name="generate",
+        as_type="generation",
+        model=CHAT_MODEL,
+        input=messages,
+    )
     try:
         response = openrouter_client.chat.send(
             model=CHAT_MODEL,
@@ -124,14 +172,30 @@ def answer_question(question: str, user_id: str) -> dict:
             max_tokens=1024,
         )
     except Exception as e:
-        # Check for 429 rate-limit in the exception message before generic handler
         if "429" in str(e) or "rate limit" in str(e).lower() or "too many requests" in str(e).lower():
             logger.warning("llm_rate_limited user_id=%s", user_id)
+            gen_span.update(metadata={"error": "rate_limited"})
+            gen_span.end()
+            trace.update(metadata={"error": "rate_limited"})
+            trace.end()
+            lf.flush()
             raise RuntimeError("The AI model is currently rate-limited. Please wait a moment and try again.") from e
         logger.error("llm_call_failed user_id=%s error=%s", user_id, e)
+        gen_span.update(metadata={"error": str(e)})
+        gen_span.end()
+        trace.update(metadata={"error": str(e)})
+        trace.end()
+        lf.flush()
         raise RuntimeError("Language model unavailable. Please try again later.") from e
+
     answer = response.choices[0].message.content
     logger.info("answer_done user_id=%s answer_len=%d sources=%s", user_id, len(answer), sources)
+
+    gen_span.update(output={"answer": answer})
+    gen_span.end()
+    trace.update(output={"answer": answer, "sources": sources})
+    trace.end()
+    lf.flush()
 
     # Persist this exchange
     _append_history(user_id, "user", question)
@@ -143,18 +207,58 @@ def answer_question(question: str, user_id: str) -> dict:
 async def stream_answer_question(
     question: str, user_id: str
 ) -> AsyncGenerator[str, None]:
-    """Async generator yielding SSE-formatted strings for a streaming response."""
+    """Async generator yielding SSE-formatted strings for a streaming response.
+    Creates one Langfuse trace with three spans: embed → retrieve → generate."""
     logger.info("stream_start user_id=%s question_len=%d", user_id, len(question))
-    embedding = embed_question(question)
+
+    lf = get_langfuse()
+    trace = lf.start_observation(
+        name="rag-stream",
+        as_type="span",
+        input={"question": question},
+        metadata={"user_id": user_id, "mode": "streaming"},
+    )
+
+    # --- Span: embed ---
+    embed_span = trace.start_observation(
+        name="embed",
+        as_type="embedding",
+        input={"question": question},
+    )
+    try:
+        embedding = embed_question(question)
+    except Exception as e:
+        embed_span.update(metadata={"error": str(e)})
+        embed_span.end()
+        trace.update(metadata={"error": str(e)})
+        trace.end()
+        lf.flush()
+        yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
+        yield "data: [DONE]\n\n"
+        return
+    embed_span.update(output={"dimensions": len(embedding)}, model=EMBED_MODEL)
+    embed_span.end()
+
+    # --- Span: retrieve ---
+    retrieve_span = trace.start_observation(
+        name="retrieve",
+        as_type="retriever",
+        input={"user_id": user_id},
+    )
     chunks, sources = retrieve_chunks(embedding, user_id)
+    retrieve_span.update(output={"chunks_count": len(chunks), "sources": sources})
+    retrieve_span.end()
 
     if not chunks:
         logger.warning("stream_no_chunks user_id=%s", user_id)
+        trace.update(metadata={"error": "no_chunks_found"})
+        trace.end()
+        lf.flush()
         yield f'data: {json.dumps({"type": "error", "message": "No relevant documents found for your account."})}\n\n'
         yield "data: [DONE]\n\n"
         return
 
-    # Send sources immediately so the UI can render them before tokens arrive
+    # Send sources to the UI immediately
     yield f'data: {json.dumps({"type": "sources", "sources": sources})}\n\n'
 
     messages = [
@@ -162,6 +266,14 @@ async def stream_answer_question(
         *get_history(user_id),
         {"role": "user", "content": question},
     ]
+
+    # --- Span: generate ---
+    gen_span = trace.start_observation(
+        name="generate",
+        as_type="generation",
+        model=CHAT_MODEL,
+        input=messages,
+    )
 
     full_answer = ""
     try:
@@ -180,16 +292,20 @@ async def stream_answer_question(
                     "stream": True,
                 },
             ) as response:
-                # Check for rate-limit before consuming the stream
                 if response.status_code == 429:
                     logger.warning("stream_rate_limited user_id=%s", user_id)
+                    gen_span.update(metadata={"error": "rate_limited"})
+                    gen_span.end()
+                    trace.update(metadata={"error": "rate_limited"})
+                    trace.end()
+                    lf.flush()
                     yield f'data: {json.dumps({"type": "error", "message": "The AI model is currently rate-limited. Please wait a moment and try again."})}\n\n'
                     yield "data: [DONE]\n\n"
                     return
                 async for line in response.aiter_lines():
                     if not line.startswith("data: "):
                         continue
-                    raw = line[6:]  # strip "data: " prefix
+                    raw = line[6:]
                     if raw == "[DONE]":
                         break
                     try:
@@ -202,14 +318,30 @@ async def stream_answer_question(
                         continue
     except httpx.TimeoutException:
         logger.error("stream_timeout user_id=%s", user_id)
+        gen_span.update(metadata={"error": "timeout"})
+        gen_span.end()
+        trace.update(metadata={"error": "timeout"})
+        trace.end()
+        lf.flush()
         yield f'data: {json.dumps({"type": "error", "message": "The request timed out. Please try again."})}\n\n'
         yield "data: [DONE]\n\n"
         return
     except Exception as e:
         logger.error("stream_llm_failed user_id=%s error=%s", user_id, e)
+        gen_span.update(metadata={"error": str(e)})
+        gen_span.end()
+        trace.update(metadata={"error": str(e)})
+        trace.end()
+        lf.flush()
         yield f'data: {json.dumps({"type": "error", "message": "Language model unavailable. Please try again later."})}\n\n'
         yield "data: [DONE]\n\n"
         return
+
+    gen_span.update(output={"answer": full_answer})
+    gen_span.end()
+    trace.update(output={"answer": full_answer, "sources": sources})
+    trace.end()
+    lf.flush()
 
     # Persist the full exchange after streaming completes
     _append_history(user_id, "user", question)

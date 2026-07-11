@@ -54,6 +54,37 @@ Frontend API URL is controlled by `VITE_API_BASE_URL` (default `http://localhost
 
 ---
 
+## Observability (Langfuse)
+
+Langfuse tracing is **opt-in**. Add these three keys to `backend/.env` to enable:
+
+```
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_HOST=https://cloud.langfuse.com   # or your self-hosted URL
+```
+
+Get free keys at https://cloud.langfuse.com. Leave blank (or omit) to disable — the app runs identically with a silent no-op stub.
+
+**What is traced:**
+
+| Operation | Trace name | Spans |
+|-----------|-----------|-------|
+| Chat (non-streaming) | `rag-answer` | `embed` → `retrieve` → `generate` |
+| Chat (streaming SSE) | `rag-stream` | `embed` → `retrieve` → `generate` |
+| Document upload | `document-upload` | `parse` → `chunk` → `embed` → `upsert` |
+
+Each trace is tagged with `user_id` and captures inputs, outputs, and error details at every span.
+
+**Key files:**
+- `backend/app/core/langfuse.py` — singleton client + no-op stub
+- `backend/app/services/ai_service.py` — chat traces
+- `backend/app/services/document_service.py` — upload traces
+
+**Test isolation:** `conftest.py` sets `LANGFUSE_SECRET_KEY=""` on the mock settings, which forces the no-op stub in all unit tests. No Langfuse credentials needed to run tests.
+
+---
+
 ## Toolchain quirks
 
 - **Python package manager is `uv`**, not pip or poetry. Use `uv sync` / `uv run`. `uv.lock` is the lockfile.
