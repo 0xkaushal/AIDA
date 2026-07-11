@@ -8,5 +8,6 @@ dist/
 .venv/
 .uv/
 
-# Eval results — keep the directory, ignore run outputs
+# Eval results — keep the directories, ignore run outputs
 backend/eval/results/*.json
+backend/eval_ragas/results/*.json

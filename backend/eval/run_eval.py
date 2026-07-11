@@ -1,8 +1,7 @@
 """
-AIDA Evaluation Runner — powered by RAGAS
-==========================================
+AIDA Evaluation Runner
+======================
 Runs the eval dataset against the live RAG pipeline (real Pinecone + OpenRouter).
-Scores each case with RAGAS metrics: faithfulness, answer_relevancy, context_recall.
 Documents must already be indexed in Pinecone before running.
 
 Usage (from backend/):
@@ -15,36 +14,35 @@ Options:
     --user_id           (required) user_id whose indexed documents to query
     --tags              comma-separated tags to filter dataset cases (default: all)
     --output            path to write JSON results (default: results/run_<timestamp>.json)
-    --skip-llm-metrics  skip faithfulness + answer_relevancy (no extra LLM calls for scoring)
+    --skip-llm-metrics  run only context_recall (no OpenRouter calls for scoring)
     --verbose           print per-case details during the run
 
 Exit codes:
-    0   all cases passed (avg faithfulness and answer_relevancy >= 0.7)
-    1   one or more metrics below threshold, or cases errored
-    2   configuration or service error
+    0   all cases passed (avg faithfulness and answer_relevance >= 0.7)
+    1   one or more cases below threshold
+    2   run failed due to a configuration or service error
 """
 
 import argparse
 import json
 import logging
+import os
 import sys
 import time
-import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 # ---------------------------------------------------------------------------
-# Path setup — make backend/app/ importable
+# Path setup — make backend/app/ importable (mirrors conftest.py approach)
 # ---------------------------------------------------------------------------
 _HERE = Path(__file__).resolve().parent          # backend/eval/
 _APP = _HERE.parent / "app"                      # backend/app/
 if str(_APP) not in sys.path:
     sys.path.insert(0, str(_APP))
 
-# Suppress RAGAS/LangChain deprecation noise
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
+# Now we can import app modules
+from core.config import settings  # noqa: E402
 from services.ai_service import (  # noqa: E402
     answer_question,
     retrieve_chunks,
@@ -52,10 +50,11 @@ from services.ai_service import (  # noqa: E402
     CHAT_MODEL,
 )
 from eval.dataset import DATASET, EvalCase  # noqa: E402
-from eval.metrics import get_metrics  # noqa: E402
-
-from ragas.dataset_schema import SingleTurnSample, EvaluationDataset  # noqa: E402
-from ragas import evaluate  # noqa: E402
+from eval.metrics import (  # noqa: E402
+    context_recall,
+    faithfulness,
+    answer_relevance,
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -66,158 +65,170 @@ logging.basicConfig(
 )
 logger = logging.getLogger("aida.eval")
 
-# Quiet noisy third-party loggers
-for _noisy in ("httpx", "openai", "langchain", "ragas"):
-    logging.getLogger(_noisy).setLevel(logging.WARNING)
-
 # ---------------------------------------------------------------------------
-# Thresholds
+# Thresholds (fail the run if averages fall below these)
 # ---------------------------------------------------------------------------
 PASS_THRESHOLD_FAITHFULNESS = 0.7
-PASS_THRESHOLD_RELEVANCY = 0.7
+PASS_THRESHOLD_RELEVANCE = 0.7
 
 
 # ---------------------------------------------------------------------------
-# Per-case RAG execution
+# Per-case runner
 # ---------------------------------------------------------------------------
 
-def run_rag(case: EvalCase, user_id: str) -> dict:
+def run_case(
+    case: EvalCase,
+    user_id: str,
+    skip_llm_metrics: bool = False,
+    verbose: bool = False,
+) -> dict:
     """
-    Run the full RAG pipeline for one EvalCase.
-    Returns a dict with answer, sources, chunks, latency_ms, and error.
+    Run a single EvalCase and return a result dict.
+
+    Steps:
+    1. Embed the question.
+    2. Retrieve chunks from Pinecone.
+    3. Build an answer via answer_question().
+    4. Score with the three metrics.
     """
-    result = {
+    result: dict = {
+        "question": case.question,
+        "ground_truth": case.ground_truth,
+        "key_facts": case.key_facts,
+        "expected_sources": case.expected_sources,
+        "tags": case.tags,
         "answer": None,
         "sources": [],
         "chunks": [],
-        "latency_ms": None,
+        "context_recall": None,
+        "faithfulness": None,
+        "answer_relevance": None,
         "error": None,
+        "latency_ms": None,
     }
+
     t0 = time.monotonic()
     try:
+        # --- Retrieve (separately so we can expose chunks for scoring) ---
         embedding = embed_question(case.question)
         chunks, sources = retrieve_chunks(embedding, user_id)
+
+        # --- Generate answer ---
         response = answer_question(case.question, user_id)
-        result["answer"] = response["answer"]
-        result["sources"] = response["sources"]
+        answer = response["answer"]
+        answer_sources = response["sources"]
+
+        latency_ms = int((time.monotonic() - t0) * 1000)
+
+        result["answer"] = answer
+        result["sources"] = answer_sources
         result["chunks"] = chunks
+        result["latency_ms"] = latency_ms
+
+        # --- Score ---
+        result["context_recall"] = context_recall(case.key_facts, chunks)
+
+        if not skip_llm_metrics:
+            result["faithfulness"] = faithfulness(answer, chunks)
+            result["answer_relevance"] = answer_relevance(case.question, answer)
+
+        if verbose:
+            _print_case(result)
+
     except Exception as e:
         result["error"] = str(e)
-        logger.error("rag_failed question=%r error=%s", case.question[:60], e)
-    finally:
         result["latency_ms"] = int((time.monotonic() - t0) * 1000)
+        logger.error("case_failed question=%r error=%s", case.question[:60], e)
+
     return result
 
 
+def _print_case(r: dict) -> None:
+    print(f"\n  Q: {r['question']}")
+    print(f"  A: {r['answer'][:200]}{'...' if r['answer'] and len(r['answer']) > 200 else ''}")
+    print(f"  sources: {r['sources']}")
+    print(f"  context_recall:   {r['context_recall']}")
+    print(f"  faithfulness:     {r['faithfulness']}")
+    print(f"  answer_relevance: {r['answer_relevance']}")
+    print(f"  latency_ms:       {r['latency_ms']}")
+    if r["error"]:
+        print(f"  ERROR: {r['error']}")
+
+
 # ---------------------------------------------------------------------------
-# Main runner
+# Summary
+# ---------------------------------------------------------------------------
+
+def _avg(values: List[Optional[float]]) -> Optional[float]:
+    nums = [v for v in values if v is not None]
+    return round(sum(nums) / len(nums), 4) if nums else None
+
+
+def build_summary(cases: List[dict]) -> dict:
+    return {
+        "total_cases": len(cases),
+        "errors": sum(1 for c in cases if c["error"]),
+        "avg_context_recall": _avg([c["context_recall"] for c in cases]),
+        "avg_faithfulness": _avg([c["faithfulness"] for c in cases]),
+        "avg_answer_relevance": _avg([c["answer_relevance"] for c in cases]),
+        "avg_latency_ms": _avg([c["latency_ms"] for c in cases]),
+    }
+
+
+# ---------------------------------------------------------------------------
+# CLI entrypoint
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="AIDA RAG evaluation runner (RAGAS)")
-    parser.add_argument("--user_id", required=True)
-    parser.add_argument("--tags", default="", help="comma-separated tags to filter dataset")
-    parser.add_argument("--output", default="", help="path to write JSON results")
+    parser = argparse.ArgumentParser(description="AIDA RAG evaluation runner")
+    parser.add_argument("--user_id", required=True, help="user_id whose Pinecone docs to query")
     parser.add_argument(
-        "--skip-llm-metrics", action="store_true",
-        help="skip RAGAS faithfulness + answer_relevancy scoring",
+        "--tags",
+        default="",
+        help="comma-separated tags to filter dataset (default: run all cases)",
     )
-    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--output",
+        default="",
+        help="path to write JSON results (default: eval/results/run_<timestamp>.json)",
+    )
+    parser.add_argument(
+        "--skip-llm-metrics",
+        action="store_true",
+        help="skip faithfulness and answer_relevance (faster, no extra LLM calls)",
+    )
+    parser.add_argument("--verbose", action="store_true", help="print per-case output")
     args = parser.parse_args()
 
     # --- Filter dataset ---
     tag_filter = {t.strip() for t in args.tags.split(",") if t.strip()}
     cases: List[EvalCase] = (
         [c for c in DATASET if tag_filter.intersection(c.tags)]
-        if tag_filter else list(DATASET)
+        if tag_filter
+        else list(DATASET)
     )
+
     if not cases:
-        logger.error("No eval cases match tags: %s", tag_filter)
+        logger.error("No eval cases match the given tags: %s", tag_filter)
         return 2
 
     logger.info("eval_start cases=%d user_id=%s model=%s", len(cases), args.user_id, CHAT_MODEL)
 
-    # --- Step 1: run RAG for all cases ---
-    rag_results = []
+    # --- Run ---
+    results = []
     for i, case in enumerate(cases, 1):
-        logger.info("running case %d/%d: %s", i, len(cases), case.question[:60])
-        rag_results.append(run_rag(case, args.user_id))
+        logger.info("case %d/%d: %s", i, len(cases), case.question[:60])
+        result = run_case(
+            case,
+            user_id=args.user_id,
+            skip_llm_metrics=args.skip_llm_metrics,
+            verbose=args.verbose,
+        )
+        results.append(result)
 
-    # --- Step 2: score with RAGAS ---
-    ragas_scores: List[dict] = [{} for _ in cases]
-    failed_cases = [r for r in rag_results if r["error"]]
+    summary = build_summary(results)
 
-    if not args.skip_llm_metrics:
-        # Build RAGAS EvaluationDataset — only include non-errored cases
-        valid_indices = [i for i, r in enumerate(rag_results) if not r["error"]]
-        samples = []
-        for i in valid_indices:
-            case = cases[i]
-            r = rag_results[i]
-            samples.append(SingleTurnSample(
-                user_input=case.question,
-                response=r["answer"],
-                retrieved_contexts=r["chunks"] or [""],
-                reference=case.ground_truth,
-            ))
-
-        if samples:
-            logger.info("scoring %d samples with RAGAS...", len(samples))
-            faithfulness_m, relevancy_m, recall_m = get_metrics()
-            ragas_dataset = EvaluationDataset(samples=samples)
-            ragas_result = evaluate(
-                ragas_dataset,
-                metrics=[faithfulness_m, relevancy_m, recall_m],
-                show_progress=True,
-            )
-            df = ragas_result.to_pandas()
-            for j, idx in enumerate(valid_indices):
-                ragas_scores[idx] = {
-                    "faithfulness": round(float(df.iloc[j]["faithfulness"]), 4)
-                        if "faithfulness" in df.columns else None,
-                    "answer_relevancy": round(float(df.iloc[j]["answer_relevancy"]), 4)
-                        if "answer_relevancy" in df.columns else None,
-                    "context_recall": round(float(df.iloc[j]["context_recall"]), 4)
-                        if "context_recall" in df.columns else None,
-                }
-
-    # --- Step 3: assemble final results ---
-    all_results = []
-    for i, case in enumerate(cases):
-        r = rag_results[i]
-        s = ragas_scores[i]
-        entry = {
-            "question": case.question,
-            "ground_truth": case.ground_truth,
-            "tags": case.tags,
-            "answer": r["answer"],
-            "sources": r["sources"],
-            "chunks_retrieved": len(r["chunks"]),
-            "latency_ms": r["latency_ms"],
-            "error": r["error"],
-            "faithfulness": s.get("faithfulness"),
-            "answer_relevancy": s.get("answer_relevancy"),
-            "context_recall": s.get("context_recall"),
-        }
-        all_results.append(entry)
-        if args.verbose:
-            _print_case(entry)
-
-    # --- Step 4: summary ---
-    def _avg(key):
-        vals = [r[key] for r in all_results if r[key] is not None]
-        return round(sum(vals) / len(vals), 4) if vals else None
-
-    summary = {
-        "total_cases": len(cases),
-        "errors": len(failed_cases),
-        "avg_faithfulness": _avg("faithfulness"),
-        "avg_answer_relevancy": _avg("answer_relevancy"),
-        "avg_context_recall": _avg("context_recall"),
-        "avg_latency_ms": _avg("latency_ms"),
-    }
-
-    # --- Step 5: write output ---
+    # --- Output ---
     output_path = args.output
     if not output_path:
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -229,59 +240,40 @@ def main() -> int:
         "run_at": datetime.now(timezone.utc).isoformat(),
         "user_id": args.user_id,
         "model": CHAT_MODEL,
-        "ragas_version": _ragas_version(),
         "skip_llm_metrics": args.skip_llm_metrics,
         "summary": summary,
-        "cases": all_results,
+        "cases": results,
     }
+
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
 
     logger.info("eval_done output=%s", output_path)
 
-    # --- Step 6: print summary ---
+    # --- Print summary ---
     print("\n" + "=" * 60)
-    print("EVAL SUMMARY  (RAGAS)")
+    print("EVAL SUMMARY")
     print("=" * 60)
     for k, v in summary.items():
         print(f"  {k:<30} {v}")
     print(f"\n  Results written to: {output_path}")
     print("=" * 60)
 
-    # --- Step 7: pass/fail ---
+    # --- Pass/fail ---
     if not args.skip_llm_metrics:
         faith = summary.get("avg_faithfulness") or 0.0
-        rel = summary.get("avg_answer_relevancy") or 0.0
-        if faith < PASS_THRESHOLD_FAITHFULNESS or rel < PASS_THRESHOLD_RELEVANCY:
+        rel = summary.get("avg_answer_relevance") or 0.0
+        if faith < PASS_THRESHOLD_FAITHFULNESS or rel < PASS_THRESHOLD_RELEVANCE:
             logger.warning(
-                "eval_below_threshold faithfulness=%.2f answer_relevancy=%.2f",
-                faith, rel,
+                "eval_below_threshold faithfulness=%.2f relevance=%.2f thresholds=%.2f/%.2f",
+                faith, rel, PASS_THRESHOLD_FAITHFULNESS, PASS_THRESHOLD_RELEVANCE,
             )
             return 1
 
-    return 1 if failed_cases else 0
+    if summary["errors"] > 0:
+        return 1
 
-
-def _print_case(r: dict) -> None:
-    print(f"\n  Q: {r['question']}")
-    a = r['answer'] or ""
-    print(f"  A: {a[:200]}{'...' if len(a) > 200 else ''}")
-    print(f"  sources:          {r['sources']}")
-    print(f"  chunks_retrieved: {r['chunks_retrieved']}")
-    print(f"  faithfulness:     {r['faithfulness']}")
-    print(f"  answer_relevancy: {r['answer_relevancy']}")
-    print(f"  context_recall:   {r['context_recall']}")
-    print(f"  latency_ms:       {r['latency_ms']}")
-    if r["error"]:
-        print(f"  ERROR: {r['error']}")
-
-
-def _ragas_version() -> str:
-    try:
-        import ragas
-        return ragas.__version__
-    except Exception:
-        return "unknown"
+    return 0
 
 
 if __name__ == "__main__":

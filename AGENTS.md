@@ -109,24 +109,44 @@ No pytest.ini; no ruff; no mypy. Python has no automated linting beyond what you
 
 ## Evaluation framework
 
-Lives in `backend/eval/`. Runs against **live** Pinecone + OpenRouter — requires a real `.env` and documents already indexed. Separate from the unit tests (which are fully mocked).
+Two separate eval implementations live side by side. Both run against **live** Pinecone + OpenRouter and share the same dataset (`backend/eval/dataset.py`).
+
+### Naive eval — `backend/eval/`
+
+Custom LLM-judge implementation using raw `httpx` calls. No extra dependencies.
 
 ```bash
 # from backend/
 uv run python -m eval.run_eval --user_id <eval_user_id>
 uv run python -m eval.run_eval --user_id eval_user --tags factual
-uv run python -m eval.run_eval --user_id eval_user --skip-llm-metrics   # context_recall only, no extra LLM calls
-uv run python -m eval.run_eval --user_id eval_user --output results/my_run.json
+uv run python -m eval.run_eval --user_id eval_user --skip-llm-metrics   # context_recall only
+uv run python -m eval.run_eval --user_id eval_user --output eval/results/my_run.json
 ```
 
-Powered by **RAGAS 0.4.x** (`ragas`, `langchain-openai`, `langchain-google-vertexai` are required deps). Three metrics — all return `[0.0, 1.0]`:
-- **context_recall** — LLM judge: were all facts in `ground_truth` present in retrieved context?
+Three metrics — all return `[0.0, 1.0]`:
+- **context_recall** — string match (no LLM): fraction of `key_facts` found in retrieved chunks
 - **faithfulness** — LLM judge: fraction of answer claims supported by context
-- **answer_relevancy** — LLM + embedding judge: does the answer address the question?
+- **answer_relevance** — LLM judge: does the answer address the question?
 
-Results are written to `backend/eval/results/run_<timestamp>.json` (gitignored). Exit code 1 if avg faithfulness or answer_relevancy < 0.7, or if any case errored.
+Results: `backend/eval/results/run_<timestamp>.json` (gitignored).
 
-To add test cases: edit `backend/eval/dataset.py` — add `EvalCase` entries with `question`, `ground_truth`, and optionally `expected_sources` and `tags`. Documents referenced must already be indexed in Pinecone under the eval `user_id`.
+To add test cases: edit `backend/eval/dataset.py` — add `EvalCase` entries with `question`, `ground_truth`, `key_facts`, and optionally `expected_sources` and `tags`.
+
+### RAGAS eval — `backend/eval_ragas/`
+
+Same pipeline, scoring powered by **RAGAS 0.4.x**. Requires extra deps: `ragas`, `langchain-openai`, `langchain-google-vertexai` (already in `pyproject.toml`). Shares `eval/dataset.py` — no separate dataset needed.
+
+```bash
+# from backend/
+uv run python -m eval_ragas.run_eval --user_id <eval_user_id>
+uv run python -m eval_ragas.run_eval --user_id eval_user --tags factual
+uv run python -m eval_ragas.run_eval --user_id eval_user --skip-llm-metrics
+uv run python -m eval_ragas.run_eval --user_id eval_user --output eval_ragas/results/my_run.json
+```
+
+Three metrics (RAGAS): **faithfulness**, **answer_relevancy**, **context_recall** — all `[0.0, 1.0]`.
+
+Results: `backend/eval_ragas/results/run_<timestamp>.json` (gitignored). Exit code 1 if avg faithfulness or answer_relevancy < 0.7, or if any case errored.
 
 **RAGAS wiring quirk**: RAGAS 0.4.3 has a broken import (`langchain_community.chat_models.vertexai`). On fresh install, patch `.venv/lib/python3.11/site-packages/ragas/llms/base.py` lines 12-13 to import from `langchain_google_vertexai` instead. The metrics use `_Faithfulness`, `_ResponseRelevancy`, `_LLMContextRecall` (underscore-prefixed classes) — these are the stable `Metric` subclasses that work with `evaluate()`. The non-underscore versions in `ragas.metrics.collections` use a different base class and are incompatible with `evaluate()`.
 
